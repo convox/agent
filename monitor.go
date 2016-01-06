@@ -17,12 +17,16 @@ import (
 )
 
 type Monitor struct {
-	client     *docker.Client
-	envs       map[string]map[string]string
+	client *docker.Client
+
 	instanceId string
 	image      string
-	lock       sync.Mutex
-	lines      map[string][][]byte
+
+	envs map[string]map[string]string // container id -> env on create
+
+	lock           sync.Mutex          // lock around Docker logs -> lines and lines -> AWS
+	lines          map[string][][]byte // container id -> logs that is truncated on PUT
+	sequenceTokens map[string]string   // container id (LogStream) -> SequenceToken that is updated on PUT
 }
 
 func NewMonitor() *Monitor {
@@ -32,14 +36,18 @@ func NewMonitor() *Monitor {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("monitor new region=%s kinesis=%s\n", os.Getenv("AWS_REGION"), os.Getenv("KINESIS"))
+	fmt.Printf("monitor new region=%s kinesis=%s log_group=%s\n", os.Getenv("AWS_REGION"), os.Getenv("KINESIS"), os.Getenv("LOG_GROUP"))
 
 	return &Monitor{
-		client:     client,
-		envs:       make(map[string]map[string]string),
-		lines:      make(map[string][][]byte),
+		client: client,
+
 		instanceId: GetInstanceId(),
 		image:      "convox/agent", // also set during handleRunning
+
+		envs: make(map[string]map[string]string),
+
+		lines:          make(map[string][][]byte),
+		sequenceTokens: make(map[string]string),
 	}
 }
 
@@ -50,7 +58,7 @@ func (m *Monitor) Listen() {
 	ch := make(chan *docker.APIEvents)
 
 	go m.handleEvents(ch)
-	go m.streamLogs()
+	go m.putLogs()
 
 	m.client.AddEventListener(ch)
 
@@ -131,7 +139,7 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 }
 
 func (m *Monitor) handleCreate(id string) {
-	image, env, err := m.inspectContainer(id)
+	env, err := m.inspectContainer(id)
 
 	if err != nil {
 		log.Printf("error: %s\n", err)
@@ -142,7 +150,7 @@ func (m *Monitor) handleCreate(id string) {
 
 	m.logEvent(id, fmt.Sprintf("Starting process %s", id[0:12]))
 
-	go m.subscribeLogs(id, env["KINESIS"], image, env["PROCESS"], env["RELEASE"])
+	go m.subscribeLogs(id)
 }
 
 func (m *Monitor) handleDie(id string) {
@@ -164,16 +172,14 @@ func (m *Monitor) handleStop(id string) {
 	m.logEvent(id, fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12]))
 }
 
-func (m *Monitor) inspectContainer(id string) (string, map[string]string, error) {
+func (m *Monitor) inspectContainer(id string) (map[string]string, error) {
 	env := map[string]string{}
 
 	container, err := m.client.InspectContainer(id)
 
-	image := container.Config.Image
-
 	if err != nil {
 		log.Printf("error: %s\n", err)
-		return image, env, err
+		return env, err
 	}
 
 	for _, e := range container.Config.Env {
@@ -184,15 +190,15 @@ func (m *Monitor) inspectContainer(id string) (string, map[string]string, error)
 		}
 	}
 
-	return image, env, nil
+	return env, nil
 }
 
 func (m *Monitor) logEvent(id, message string) {
 	env := m.envs[id]
-	stream := env["KINESIS"]
+	logGroup := env["LOG_GROUP"]
 
-	if stream != "" {
-		m.addLine(stream, []byte(fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.image, message)))
+	if logGroup != "" {
+		m.addLine(id, []byte(fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.image, message)))
 	}
 }
 
@@ -228,18 +234,24 @@ func (m *Monitor) updateCgroups(id string, env map[string]string) {
 	}
 }
 
-func (m *Monitor) subscribeLogs(id, stream, image, process, release string) {
-	if stream == "" {
+func (m *Monitor) subscribeLogs(id string) {
+	env := m.envs[id]
+
+	logGroup := env["LOG_GROUP"]
+	process := env["PROCESS"]
+	release := env["RELEASE"]
+
+	if logGroup == "" {
 		return
 	}
 
-	// extract app name from stream
-	// myapp-staging-Kinesis-L6MUKT1VH451 -> myapp-staging
+	// extract app name from LogGroup
+	// myapp-staging-LogGroup-9I65CAJ6OLO9 -> myapp-staging
 	app := ""
 
-	parts := strings.Split(stream, "-")
+	parts := strings.Split(logGroup, "-")
 	if len(parts) > 2 {
-		app = strings.Join(parts[0:len(parts)-2], "-") // drop -Kinesis-YXXX
+		app = strings.Join(parts[0:len(parts)-2], "-") // drop -LogGroup-YXXX
 	}
 
 	time.Sleep(500 * time.Millisecond)
@@ -252,7 +264,7 @@ func (m *Monitor) subscribeLogs(id, stream, image, process, release string) {
 		scanner := bufio.NewScanner(r)
 
 		for scanner.Scan() {
-			m.addLine(stream, []byte(fmt.Sprintf("%s %s %s/%s:%s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, app, process, release, scanner.Text())))
+			m.addLine(id, []byte(fmt.Sprintf("%s %s %s/%s:%s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, app, process, release, scanner.Text())))
 		}
 
 		if scanner.Err() != nil {
@@ -278,12 +290,14 @@ func (m *Monitor) subscribeLogs(id, stream, image, process, release string) {
 	w.Close()
 }
 
-func (m *Monitor) streamLogs() {
+func (m *Monitor) putLogs() {
 	Kinesis := kinesis.New(&aws.Config{})
 
 	for _ = range time.Tick(100 * time.Millisecond) {
-		for _, stream := range m.streams() {
-			l := m.getLines(stream)
+		for _, id := range m.ids() {
+			stream := m.envs[id]["KINESIS"]
+
+			l := m.getLines(id)
 
 			if l == nil {
 				continue
@@ -318,18 +332,18 @@ func (m *Monitor) streamLogs() {
 	}
 }
 
-func (m *Monitor) addLine(stream string, data []byte) {
+func (m *Monitor) addLine(id string, data []byte) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	m.lines[stream] = append(m.lines[stream], data)
+	m.lines[id] = append(m.lines[id], data)
 }
 
-func (m *Monitor) getLines(stream string) [][]byte {
+func (m *Monitor) getLines(id string) [][]byte {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	nl := len(m.lines[stream])
+	nl := len(m.lines[id])
 
 	if nl == 0 {
 		return nil
@@ -340,23 +354,23 @@ func (m *Monitor) getLines(stream string) [][]byte {
 	}
 
 	ret := make([][]byte, nl)
-	copy(ret, m.lines[stream])
-	m.lines[stream] = m.lines[stream][nl:]
+	copy(ret, m.lines[id])
+	m.lines[id] = m.lines[id][nl:]
 
 	return ret
 }
 
-func (m *Monitor) streams() []string {
+func (m *Monitor) ids() []string {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	streams := make([]string, len(m.lines))
+	ids := make([]string, len(m.lines))
 	i := 0
 
 	for key, _ := range m.lines {
-		streams[i] = key
+		ids[i] = key
 		i += 1
 	}
 
-	return streams
+	return ids
 }
