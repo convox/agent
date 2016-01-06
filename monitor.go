@@ -13,6 +13,7 @@ import (
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/kinesis"
 	docker "github.com/convox/agent/Godeps/_workspace/src/github.com/fsouza/go-dockerclient"
 )
 
@@ -290,6 +291,38 @@ func (m *Monitor) subscribeLogs(id string) {
 	w.Close()
 }
 
+func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
+	Kinesis := kinesis.New(&aws.Config{})
+
+	stream := m.envs[id]["KINESIS"]
+
+	records := &kinesis.PutRecordsInput{
+		Records:    make([]*kinesis.PutRecordsRequestEntry, len(l)),
+		StreamName: aws.String(stream),
+	}
+
+	for i, line := range l {
+		records.Records[i] = &kinesis.PutRecordsRequestEntry{
+			Data:         line,
+			PartitionKey: aws.String(string(time.Now().UnixNano())),
+		}
+	}
+
+	res, err := Kinesis.PutRecords(records)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+	}
+
+	for _, r := range res.Records {
+		if r.ErrorCode != nil {
+			fmt.Printf("error: %s\n", *r.ErrorCode)
+		}
+	}
+
+	fmt.Printf("monitor upload to=kinesis stream=%q lines=%d\n", stream, len(res.Records))
+}
+
 func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	Logs := cloudwatchlogs.New(&aws.Config{})
 
@@ -368,6 +401,7 @@ func (m *Monitor) putLogs() {
 			}
 
 			m.putCloudWatchLogs(id, l)
+			m.putKinesisLogs(id, l)
 		}
 	}
 }
