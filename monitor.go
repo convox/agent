@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws"
-	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/kinesis"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	docker "github.com/convox/agent/Godeps/_workspace/src/github.com/fsouza/go-dockerclient"
 )
 
@@ -291,11 +291,11 @@ func (m *Monitor) subscribeLogs(id string) {
 }
 
 func (m *Monitor) putLogs() {
-	Kinesis := kinesis.New(&aws.Config{})
+	Logs := cloudwatchlogs.New(&aws.Config{})
 
 	for _ = range time.Tick(100 * time.Millisecond) {
 		for _, id := range m.ids() {
-			stream := m.envs[id]["KINESIS"]
+			logGroup := m.envs[id]["LOG_GROUP"]
 
 			l := m.getLines(id)
 
@@ -303,31 +303,63 @@ func (m *Monitor) putLogs() {
 				continue
 			}
 
-			records := &kinesis.PutRecordsInput{
-				Records:    make([]*kinesis.PutRecordsRequestEntry, len(l)),
-				StreamName: aws.String(stream),
+			// describe the LogStream and sequence token
+			// or create a LogStream if doesn't exist
+			if m.sequenceTokens[id] == "" {
+				res, err := Logs.DescribeLogStreams(&cloudwatchlogs.DescribeLogStreamsInput{
+					LogGroupName:        aws.String(logGroup),
+					LogStreamNamePrefix: aws.String(id),
+				})
+
+				if err != nil {
+					fmt.Printf("error: %s\n", err)
+					continue
+				}
+
+				if len(res.LogStreams) == 0 {
+					_, err := Logs.CreateLogStream(&cloudwatchlogs.CreateLogStreamInput{
+						LogGroupName:  aws.String(logGroup),
+						LogStreamName: aws.String(id),
+					})
+
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						continue
+					}
+				} else {
+					for _, s := range res.LogStreams {
+						m.sequenceTokens[*s.LogStreamName] = *s.UploadSequenceToken
+					}
+				}
+			}
+
+			logs := &cloudwatchlogs.PutLogEventsInput{
+				LogGroupName:  aws.String(logGroup),
+				LogStreamName: aws.String(id),
+				LogEvents:     make([]*cloudwatchlogs.InputLogEvent, len(l)),
+			}
+
+			if token, ok := m.sequenceTokens[id]; ok {
+				logs.SequenceToken = aws.String(token)
 			}
 
 			for i, line := range l {
-				records.Records[i] = &kinesis.PutRecordsRequestEntry{
-					Data:         line,
-					PartitionKey: aws.String(string(time.Now().UnixNano())),
+				logs.LogEvents[i] = &cloudwatchlogs.InputLogEvent{
+					Message:   aws.String(string(line)),
+					Timestamp: aws.Long(time.Now().UnixNano() / 1000 / 1000), // ms since epoch
 				}
 			}
 
-			res, err := Kinesis.PutRecords(records)
+			pres, err := Logs.PutLogEvents(logs)
 
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %s\n", err)
+				fmt.Printf("error: %s\n", err)
+				continue
 			}
 
-			for _, r := range res.Records {
-				if r.ErrorCode != nil {
-					fmt.Printf("error: %s\n", *r.ErrorCode)
-				}
-			}
+			m.sequenceTokens[id] = *pres.NextSequenceToken
 
-			fmt.Printf("monitor upload to=kinesis stream=%q lines=%d\n", stream, len(res.Records))
+			fmt.Printf("monitor upload to=cloudwatchlogs log_group=%s log_stream=%s lines=%d rejected=%+v\n", logGroup, id, len(logs.LogEvents), *pres.RejectedLogEventsInfo)
 		}
 	}
 }
