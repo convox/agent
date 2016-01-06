@@ -290,12 +290,76 @@ func (m *Monitor) subscribeLogs(id string) {
 	w.Close()
 }
 
-func (m *Monitor) putLogs() {
+func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	Logs := cloudwatchlogs.New(&aws.Config{})
 
+	logGroup := m.envs[id]["LOG_GROUP"]
+	process := m.envs[id]["PROCESS"]
+
+	streamName := fmt.Sprintf("%s/%s", process, id)
+
+	// describe the LogStream and sequence token
+	// or create a LogStream if doesn't exist
+	if m.sequenceTokens[id] == "" {
+		res, err := Logs.DescribeLogStreams(&cloudwatchlogs.DescribeLogStreamsInput{
+			LogGroupName:        aws.String(logGroup),
+			LogStreamNamePrefix: aws.String(streamName),
+		})
+
+		if err != nil {
+			fmt.Printf("error: %s\n", err)
+			return
+		}
+
+		if len(res.LogStreams) == 0 {
+			_, err := Logs.CreateLogStream(&cloudwatchlogs.CreateLogStreamInput{
+				LogGroupName:  aws.String(logGroup),
+				LogStreamName: aws.String(streamName),
+			})
+
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				return
+			}
+		} else {
+			for _, s := range res.LogStreams {
+				m.sequenceTokens[*s.LogStreamName] = *s.UploadSequenceToken
+			}
+		}
+	}
+
+	logs := &cloudwatchlogs.PutLogEventsInput{
+		LogGroupName:  aws.String(logGroup),
+		LogStreamName: aws.String(streamName),
+		LogEvents:     make([]*cloudwatchlogs.InputLogEvent, len(l)),
+	}
+
+	if token, ok := m.sequenceTokens[id]; ok {
+		logs.SequenceToken = aws.String(token)
+	}
+
+	for i, line := range l {
+		logs.LogEvents[i] = &cloudwatchlogs.InputLogEvent{
+			Message:   aws.String(string(line)),
+			Timestamp: aws.Long(time.Now().UnixNano() / 1000 / 1000), // ms since epoch
+		}
+	}
+
+	pres, err := Logs.PutLogEvents(logs)
+
+	if err != nil {
+		fmt.Printf("error: %s\n", err)
+		return
+	}
+
+	m.sequenceTokens[id] = *pres.NextSequenceToken
+
+	fmt.Printf("monitor upload to=cloudwatchlogs log_group=%s log_stream=%s lines=%d rejected=%+v\n", logGroup, streamName, len(logs.LogEvents), pres.RejectedLogEventsInfo)
+}
+
+func (m *Monitor) putLogs() {
 	for _ = range time.Tick(100 * time.Millisecond) {
 		for _, id := range m.ids() {
-			logGroup := m.envs[id]["LOG_GROUP"]
 
 			l := m.getLines(id)
 
@@ -303,63 +367,7 @@ func (m *Monitor) putLogs() {
 				continue
 			}
 
-			// describe the LogStream and sequence token
-			// or create a LogStream if doesn't exist
-			if m.sequenceTokens[id] == "" {
-				res, err := Logs.DescribeLogStreams(&cloudwatchlogs.DescribeLogStreamsInput{
-					LogGroupName:        aws.String(logGroup),
-					LogStreamNamePrefix: aws.String(id),
-				})
-
-				if err != nil {
-					fmt.Printf("error: %s\n", err)
-					continue
-				}
-
-				if len(res.LogStreams) == 0 {
-					_, err := Logs.CreateLogStream(&cloudwatchlogs.CreateLogStreamInput{
-						LogGroupName:  aws.String(logGroup),
-						LogStreamName: aws.String(id),
-					})
-
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						continue
-					}
-				} else {
-					for _, s := range res.LogStreams {
-						m.sequenceTokens[*s.LogStreamName] = *s.UploadSequenceToken
-					}
-				}
-			}
-
-			logs := &cloudwatchlogs.PutLogEventsInput{
-				LogGroupName:  aws.String(logGroup),
-				LogStreamName: aws.String(id),
-				LogEvents:     make([]*cloudwatchlogs.InputLogEvent, len(l)),
-			}
-
-			if token, ok := m.sequenceTokens[id]; ok {
-				logs.SequenceToken = aws.String(token)
-			}
-
-			for i, line := range l {
-				logs.LogEvents[i] = &cloudwatchlogs.InputLogEvent{
-					Message:   aws.String(string(line)),
-					Timestamp: aws.Long(time.Now().UnixNano() / 1000 / 1000), // ms since epoch
-				}
-			}
-
-			pres, err := Logs.PutLogEvents(logs)
-
-			if err != nil {
-				fmt.Printf("error: %s\n", err)
-				continue
-			}
-
-			m.sequenceTokens[id] = *pres.NextSequenceToken
-
-			fmt.Printf("monitor upload to=cloudwatchlogs log_group=%s log_stream=%s lines=%d rejected=%+v\n", logGroup, id, len(logs.LogEvents), pres.RejectedLogEventsInfo)
+			m.putCloudWatchLogs(id, l)
 		}
 	}
 }
