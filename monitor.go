@@ -359,7 +359,7 @@ func (m *Monitor) putLogs() {
 
 			m.sequenceTokens[id] = *pres.NextSequenceToken
 
-			fmt.Printf("monitor upload to=cloudwatchlogs log_group=%s log_stream=%s lines=%d rejected=%+v\n", logGroup, id, len(logs.LogEvents), *pres.RejectedLogEventsInfo)
+			fmt.Printf("monitor upload to=cloudwatchlogs log_group=%s log_stream=%s lines=%d rejected=%+v\n", logGroup, id, len(logs.LogEvents), pres.RejectedLogEventsInfo)
 		}
 	}
 }
