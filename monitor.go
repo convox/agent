@@ -194,11 +194,24 @@ func (m *Monitor) inspectContainer(id string) (map[string]string, error) {
 	return env, nil
 }
 
-func (m *Monitor) logEvent(id, message string) {
+// Get log resource from app environment. Prefer CloudWatch LogGroup over Kinesis.
+func (m *Monitor) logResource(id string) string {
 	env := m.envs[id]
+
 	logGroup := env["LOG_GROUP"]
+	kinesis := env["KINESIS"]
 
 	if logGroup != "" {
+		return logGroup
+	}
+
+	return kinesis
+}
+
+func (m *Monitor) logEvent(id, message string) {
+	logResource := m.logResource(id)
+
+	if logResource != "" {
 		m.addLine(id, []byte(fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.image, message)))
 	}
 }
@@ -238,19 +251,20 @@ func (m *Monitor) updateCgroups(id string, env map[string]string) {
 func (m *Monitor) subscribeLogs(id string) {
 	env := m.envs[id]
 
-	logGroup := env["LOG_GROUP"]
-	process := env["PROCESS"]
-	release := env["RELEASE"]
+	logResource := m.logResource(id)
 
-	if logGroup == "" {
+	if logResource == "" {
 		return
 	}
 
-	// extract app name from LogGroup
+	process := env["PROCESS"]
+	release := env["RELEASE"]
+
+	// extract app name from Log Resource
 	// myapp-staging-LogGroup-9I65CAJ6OLO9 -> myapp-staging
 	app := ""
 
-	parts := strings.Split(logGroup, "-")
+	parts := strings.Split(logResource, "-")
 	if len(parts) > 2 {
 		app = strings.Join(parts[0:len(parts)-2], "-") // drop -LogGroup-YXXX
 	}
@@ -294,7 +308,13 @@ func (m *Monitor) subscribeLogs(id string) {
 func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
 	Kinesis := kinesis.New(&aws.Config{})
 
-	stream := m.envs[id]["KINESIS"]
+	env := m.envs[id]
+
+	stream := env["KINESIS"]
+
+	if stream == "" {
+		return
+	}
 
 	records := &kinesis.PutRecordsInput{
 		Records:    make([]*kinesis.PutRecordsRequestEntry, len(l)),
@@ -326,8 +346,14 @@ func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
 func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	Logs := cloudwatchlogs.New(&aws.Config{})
 
-	logGroup := m.envs[id]["LOG_GROUP"]
-	process := m.envs[id]["PROCESS"]
+	env := m.envs[id]
+
+	logGroup := env["LOG_GROUP"]
+	process := env["PROCESS"]
+
+	if logGroup == "" {
+		return
+	}
 
 	streamName := fmt.Sprintf("%s/%s", process, id)
 
