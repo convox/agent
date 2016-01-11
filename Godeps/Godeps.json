@@ -1,6 +1,6 @@
 {
 	"ImportPath": "github.com/convox/agent",
-	"GoVersion": "go1.4.2",
+	"GoVersion": "go1.5.2",
 	"Packages": [
 		"./..."
 	],
@@ -52,6 +52,11 @@
 		},
 		{
 			"ImportPath": "github.com/aws/aws-sdk-go/service/autoscaling",
+			"Comment": "v0.6.1-14-g7e9078c",
+			"Rev": "7e9078c250876f26da48aaf36b8dce6a462ecd8a"
+		},
+		{
+			"ImportPath": "github.com/aws/aws-sdk-go/service/cloudwatchlogs",
 			"Comment": "v0.6.1-14-g7e9078c",
 			"Rev": "7e9078c250876f26da48aaf36b8dce6a462ecd8a"
 		},
