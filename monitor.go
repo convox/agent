@@ -13,6 +13,7 @@ import (
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/Sirupsen/logrus"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/kinesis"
 	docker "github.com/convox/agent/Godeps/_workspace/src/github.com/fsouza/go-dockerclient"
@@ -301,6 +302,21 @@ func (m *Monitor) logInternalEvent(message string, put bool) {
 	}
 }
 
+func (m *Monitor) logInternalAWSErr(err error, msg string) {
+	if awsErr, ok := err.(awserr.Error); ok {
+		logrus.WithFields(logrus.Fields{
+			"errorCode": awsErr.Code(),
+			"message":   awsErr.Message(),
+			"origError": awsErr.OrigErr(),
+			// "logGroupName":  l.logGroupName,
+			// "logStreamName": l.logStreamName,
+			"count#awserr": 1,
+		}).Error(msg)
+
+		m.addLine(m.instanceId, []byte(fmt.Sprintf("_fn=logInternalAWSErr errorCode=%q message=%q origError=%q count#awserr=1 msg=%q", awsErr.Code(), awsErr.Message(), awsErr.OrigErr(), msg)))
+	}
+}
+
 // Modify the container cgroup to enable swap if SWAP=1 is set
 // Currently this only works on the Amazon ECS AMI, not Docker Machine and boot2docker
 // until a better strategy for knowing where the cgroup mount is implemented
@@ -440,7 +456,7 @@ func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
 	res, err := Kinesis.PutRecords(records)
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		m.logInternalAWSErr(err, "Kinesis.PutRecords")
 	}
 
 	for _, r := range res.Records {
@@ -458,8 +474,6 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 		"id":  id,
 		"l":   elide(l[0]),
 	}).Info()
-
-	fmt.Printf("monitor putCloudWatchLogs id=%s\n", id)
 
 	Logs := cloudwatchlogs.New(&aws.Config{})
 
@@ -494,8 +508,10 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 		fmt.Printf("ns=agent at=putCloudWatchLogs.DescribeLogStreams group=%s stream=%s\n", logGroup, streamName)
 
 		if err != nil {
+			m.logInternalAWSErr(err, "Logs.DescribeLogStreams")
+
 			m.logInternalEvent(
-				fmt.Sprintf("ns=agent at=putCloudWatchLogs.DescribeLogStreams count#error.DescribeLogStreams=1 msg=%q", err.Error()),
+				fmt.Sprintf("ns=agent at=putCloudWatchLogs.DescribeLogStreams group=%s stream=%s count#error.DescribeLogStreams=1 msg=%q", logGroup, streamName, err.Error()),
 				putInternal,
 			)
 
@@ -508,11 +524,11 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 				LogStreamName: aws.String(streamName),
 			})
 
-			fmt.Printf("ns=agent at=putCloudWatchLogs.CreateLogStream group=%s stream=%s\n", logGroup, streamName)
-
 			if err != nil {
+				m.logInternalAWSErr(err, "Logs.CreateLogStream")
+
 				m.logInternalEvent(
-					fmt.Sprintf("ns=agent at=putCloudWatchLogs.CreateLogStream count#error.CreateLogStream=1 msg=%q", err.Error()),
+					fmt.Sprintf("ns=agent at=putCloudWatchLogs.CreateLogStream group=%s stream=%s count#error.CreateLogStream=1 msg=%q", logGroup, streamName, err.Error()),
 					putInternal,
 				)
 
@@ -549,8 +565,10 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	fmt.Printf("ns=agent at=putCloudWatchLogs.PutLogEvents group=%s stream=%s events=%d sequenceToken=%s\n", logGroup, streamName, len(logs.LogEvents), m.sequenceTokens[streamName])
 
 	if err != nil {
+		m.logInternalAWSErr(err, "Logs.PutLogEvents")
+
 		m.logInternalEvent(
-			fmt.Sprintf("ns=agent at=putCloudWatchLogs.PutLogEvents count#error.PutLogEvents=1 msg=%q", err.Error()),
+			fmt.Sprintf("ns=agent at=putCloudWatchLogs.PutLogEvents group=%s stream=%s count#error.PutLogEvents=1 msg=%q", logGroup, streamName, err.Error()),
 			putInternal,
 		)
 		return
