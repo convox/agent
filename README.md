@@ -12,6 +12,7 @@ AWS_REGION=us-west-2
 AWS_ACCESS_KEY_ID=XXX
 AWS_SECRET_ACCESS_KEY=YYY
 KINESIS=convox-Kinesis-2NQ3Q5ASHY1N
+LOG_GROUP=convox-LogGroup-ALDBAB39UUEG
 ```
 
 This approximates the IAM role and env the agent has on a cluster instance.
@@ -26,18 +27,22 @@ agent | disk monitor hostname=4f7ca7a9232a utilization=16.02% used=0.1209G avail
 agent | disk monitor upload to=kinesis stream="convox-Kinesis-2NQ3Q5ASHY1N" lines=1
 ```
 
-Run a Docker container to see Docker event Kinesis upload activity:
+Run a Docker container to see Docker event Kinesis and CloudWatch Logs upload activity:
 
 ```bash
-$ docker run -e KINESIS=convox-Kinesis-2NQ3Q5ASHY1N -e PROCESS=hello-world -e RELEASE=RXBKPDQEGDU hello-world
+$ docker run -e KINESIS=httpd-Kinesis-DLHLM9PNH5OO -e LOG_GROUP=httpd-LogGroup-1M8XKXLMQT6Y3 -e PROCESS=hello-world -e RELEASE=RXBKPDQEGDU hello-world
 ```
 
 ```
-agent | monitor event id=a5018a56adc3 status=create
-agent | monitor event id=a5018a56adc3 status=attach
-agent | monitor event id=a5018a56adc3 status=start
-agent | monitor event id=a5018a56adc3 status=die
-agent | monitor upload to=kinesis stream="convox-Kinesis-2NQ3Q5ASHY1N" lines=21
+agent | monitor event id=hello-world: status=pull time=1452713995
+agent | monitor event id=269a9ae711d3 status=create time=1452713995
+agent | monitor event id=269a9ae711d3 status=attach time=1452713995
+agent | monitor event id=269a9ae711d3 status=start time=1452713995
+agent | monitor event id=269a9ae711d3 status=die time=1452713995
+agent | monitor upload to=cloudwatchlogs log_group=httpd-LogGroup-1M8XKXLMQT6Y3 log_stream=hello-world/269a9ae711d394761a13d5853cf5b66a1dfcadd5dd48db6a4914552d573e3c38 lines=1 rejected=<nil>
+agent | monitor upload to=kinesis stream="httpd-Kinesis-DLHLM9PNH5OO" lines=1
+agent | monitor upload to=cloudwatchlogs log_group=httpd-LogGroup-1M8XKXLMQT6Y3 log_stream=hello-world/269a9ae711d394761a13d5853cf5b66a1dfcadd5dd48db6a4914552d573e3c38 lines=22 rejected=<nil>
+agent | monitor upload to=kinesis stream="httpd-Kinesis-DLHLM9PNH5OO" lines=22
 ```
 
 Run a Docker container to see cgroup fun:

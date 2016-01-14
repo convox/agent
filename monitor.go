@@ -208,11 +208,25 @@ func (m *Monitor) logResource(id string) string {
 	return kinesis
 }
 
+// Log an agent event to the container Log Group or Kinesis
 func (m *Monitor) logEvent(id, message string) {
 	logResource := m.logResource(id)
 
 	if logResource != "" {
 		m.addLine(id, []byte(fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.image, message)))
+	}
+}
+
+// Log an internal agent event to stdout
+// Optionally put the message into a Log Group queue.
+// Use the instanceId instead since there isn't necessarily a convox/web container running here
+func (m *Monitor) logInternalEvent(message string, put bool) {
+	line := fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.image, message)
+
+	fmt.Println(line)
+
+	if put {
+		m.addLine(m.instanceId, []byte(line))
 	}
 }
 
@@ -351,6 +365,15 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	logGroup := env["LOG_GROUP"]
 	process := env["PROCESS"]
 
+	putInternal := true
+
+	// logConvoxEvent uses the instance id for logs that should end up in the convox log group
+	if id == m.instanceId {
+		logGroup = os.Getenv("LOG_GROUP")
+		process = "web"
+		putInternal = false
+	}
+
 	if logGroup == "" {
 		return
 	}
@@ -359,14 +382,18 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 
 	// describe the LogStream and sequence token
 	// or create a LogStream if doesn't exist
-	if m.sequenceTokens[id] == "" {
+	if m.sequenceTokens[streamName] == "" {
 		res, err := Logs.DescribeLogStreams(&cloudwatchlogs.DescribeLogStreamsInput{
 			LogGroupName:        aws.String(logGroup),
 			LogStreamNamePrefix: aws.String(streamName),
 		})
 
 		if err != nil {
-			fmt.Printf("error: %s\n", err)
+			m.logInternalEvent(
+				fmt.Sprintf("ns=agent at=putCloudWatchLogs.DescribeLogStreams count#error.DescribeLogStreams=1 msg=%q", err.Error()),
+				putInternal,
+			)
+
 			return
 		}
 
@@ -377,7 +404,11 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 			})
 
 			if err != nil {
-				fmt.Printf("error: %s\n", err)
+				m.logInternalEvent(
+					fmt.Sprintf("ns=agent at=putCloudWatchLogs.CreateLogStream count#error.CreateLogStream=1 msg=%q", err.Error()),
+					putInternal,
+				)
+
 				return
 			}
 		} else {
@@ -393,7 +424,7 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 		LogEvents:     make([]*cloudwatchlogs.InputLogEvent, len(l)),
 	}
 
-	if token, ok := m.sequenceTokens[id]; ok {
+	if token, ok := m.sequenceTokens[streamName]; ok {
 		logs.SequenceToken = aws.String(token)
 	}
 
@@ -407,13 +438,19 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	pres, err := Logs.PutLogEvents(logs)
 
 	if err != nil {
-		fmt.Printf("error: %s\n", err)
+		m.logInternalEvent(
+			fmt.Sprintf("ns=agent at=putCloudWatchLogs.PutLogEvents count#error.PutLogEvents=1 msg=%q", err.Error()),
+			putInternal,
+		)
 		return
 	}
 
-	m.sequenceTokens[id] = *pres.NextSequenceToken
+	m.sequenceTokens[streamName] = *pres.NextSequenceToken
 
-	fmt.Printf("monitor upload to=cloudwatchlogs log_group=%s log_stream=%s lines=%d rejected=%+v\n", logGroup, streamName, len(logs.LogEvents), pres.RejectedLogEventsInfo)
+	m.logInternalEvent(
+		fmt.Sprintf("ns=agent at=putCloudWatchLogs.PutLogEvents group=%s count#logevents=%d", logGroup, len(logs.LogEvents)),
+		putInternal,
+	)
 }
 
 func (m *Monitor) putLogs() {
