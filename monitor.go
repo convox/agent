@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/Sirupsen/logrus"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/kinesis"
@@ -31,13 +32,19 @@ type Monitor struct {
 }
 
 func NewMonitor() *Monitor {
+	logrus.WithFields(logrus.Fields{
+		"fn":          "NewMonitor",
+		"AWS_REGION":  os.Getenv("AWS_REGION"),
+		"DOCKER_HOST": os.Getenv("DOCKER_HOST"),
+		"KINESIS":     os.Getenv("KINESIS"),
+		"LOG_GROUP":   os.Getenv("LOG_GROUP"),
+	}).Info()
+
 	client, err := docker.NewClient(os.Getenv("DOCKER_HOST"))
 
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	fmt.Printf("monitor new region=%s kinesis=%s log_group=%s\n", os.Getenv("AWS_REGION"), os.Getenv("KINESIS"), os.Getenv("LOG_GROUP"))
 
 	return &Monitor{
 		client: client,
@@ -53,6 +60,10 @@ func NewMonitor() *Monitor {
 }
 
 func (m *Monitor) Listen() {
+	logrus.WithFields(logrus.Fields{
+		"fn": "Listen",
+	}).Info()
+
 	m.handleRunning()
 	m.handleExited()
 
@@ -70,6 +81,10 @@ func (m *Monitor) Listen() {
 
 // List already running containers and subscribe and stream logs
 func (m *Monitor) handleRunning() {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleRunning",
+	}).Info()
+
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{})
 
 	if err != nil {
@@ -95,6 +110,10 @@ func (m *Monitor) handleRunning() {
 
 // List already exiteded containers and remove
 func (m *Monitor) handleExited() {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleRunning",
+	}).Info()
+
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{
 		Filters: map[string][]string{
 			"status": []string{"exited"},
@@ -114,6 +133,11 @@ func (m *Monitor) handleExited() {
 }
 
 func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleEvents",
+		"ch": ch,
+	}).Info()
+
 	for event := range ch {
 
 		shortId := event.ID
@@ -140,6 +164,11 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 }
 
 func (m *Monitor) handleCreate(id string) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleCreate",
+		"id": id,
+	}).Info()
+
 	env, err := m.inspectContainer(id)
 
 	if err != nil {
@@ -155,6 +184,11 @@ func (m *Monitor) handleCreate(id string) {
 }
 
 func (m *Monitor) handleDie(id string) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleDie",
+		"id": id,
+	}).Info()
+
 	// While we could remove a container and volumes on this event
 	// It seems like explicitly doing a `docker run --rm` is the best way
 	// to state this intent.
@@ -162,18 +196,38 @@ func (m *Monitor) handleDie(id string) {
 }
 
 func (m *Monitor) handleKill(id string) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleKill",
+		"id": id,
+	}).Info()
+
 	m.logEvent(id, fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12]))
 }
 
 func (m *Monitor) handleStart(id string) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleStart",
+		"id": id,
+	}).Info()
+
 	m.updateCgroups(id, m.envs[id])
 }
 
 func (m *Monitor) handleStop(id string) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "handleStop",
+		"id": id,
+	}).Info()
+
 	m.logEvent(id, fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12]))
 }
 
 func (m *Monitor) inspectContainer(id string) (map[string]string, error) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "inspectContainer",
+		"id": id,
+	}).Info()
+
 	env := map[string]string{}
 
 	container, err := m.client.InspectContainer(id)
@@ -196,6 +250,11 @@ func (m *Monitor) inspectContainer(id string) (map[string]string, error) {
 
 // Get log resource from app environment. Prefer CloudWatch LogGroup over Kinesis.
 func (m *Monitor) logResource(id string) string {
+	logrus.WithFields(logrus.Fields{
+		"fn": "logResource",
+		"id": id,
+	}).Info()
+
 	env := m.envs[id]
 
 	logGroup := env["LOG_GROUP"]
@@ -210,6 +269,12 @@ func (m *Monitor) logResource(id string) string {
 
 // Log an agent event to the container Log Group or Kinesis
 func (m *Monitor) logEvent(id, message string) {
+	logrus.WithFields(logrus.Fields{
+		"fn":      "logEvent",
+		"id":      id,
+		"message": message,
+	}).Info()
+
 	logResource := m.logResource(id)
 
 	if logResource != "" {
@@ -221,6 +286,12 @@ func (m *Monitor) logEvent(id, message string) {
 // Optionally put the message into a Log Group queue.
 // Use the instanceId instead since there isn't necessarily a convox/web container running here
 func (m *Monitor) logInternalEvent(message string, put bool) {
+	logrus.WithFields(logrus.Fields{
+		"fn":      "logInternalEvent",
+		"message": message,
+		"put":     put,
+	}).Info()
+
 	line := fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.image, message)
 
 	fmt.Println(line)
@@ -234,6 +305,12 @@ func (m *Monitor) logInternalEvent(message string, put bool) {
 // Currently this only works on the Amazon ECS AMI, not Docker Machine and boot2docker
 // until a better strategy for knowing where the cgroup mount is implemented
 func (m *Monitor) updateCgroups(id string, env map[string]string) {
+	logrus.WithFields(logrus.Fields{
+		"fn":  "updateCgroups",
+		"id":  id,
+		"env": env,
+	}).Info()
+
 	if env["SWAP"] == "1" {
 		shortId := id[0:12]
 
@@ -263,7 +340,10 @@ func (m *Monitor) updateCgroups(id string, env map[string]string) {
 }
 
 func (m *Monitor) subscribeLogs(id string) {
-	fmt.Printf("monitor subscribeLogs id=%s\n", id)
+	logrus.WithFields(logrus.Fields{
+		"fn": "subscribeLogs",
+		"id": id,
+	}).Info()
 
 	env := m.envs[id]
 
@@ -290,6 +370,12 @@ func (m *Monitor) subscribeLogs(id string) {
 	r, w := io.Pipe()
 
 	go func(prefix string, r io.ReadCloser) {
+		logrus.WithFields(logrus.Fields{
+			"fn":     "subscribeLogs go func",
+			"prefix": prefix,
+			"r":      r,
+		}).Info()
+
 		defer r.Close()
 
 		scanner := bufio.NewScanner(r)
@@ -322,6 +408,12 @@ func (m *Monitor) subscribeLogs(id string) {
 }
 
 func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "putKinesisLogs",
+		"id": id,
+		"l":  elide(l[0]),
+	}).Info()
+
 	Kinesis := kinesis.New(&aws.Config{})
 
 	env := m.envs[id]
@@ -360,6 +452,12 @@ func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
 }
 
 func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
+	logrus.WithFields(logrus.Fields{
+		"fn": "putCloudWatchLogs",
+		"id": id,
+		"l":  elide(l[0]),
+	}).Info()
+
 	fmt.Printf("monitor putCloudWatchLogs id=%s\n", id)
 
 	Logs := cloudwatchlogs.New(&aws.Config{})
@@ -421,7 +519,7 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 			}
 		} else {
 			for _, s := range res.LogStreams {
-				m.sequenceTokens[*s.LogStreamName] = *s.UploadSequenceToken
+				m.setSequenceToken(*s.LogStreamName, *s.UploadSequenceToken)
 			}
 		}
 	}
@@ -432,7 +530,9 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 		LogEvents:     make([]*cloudwatchlogs.InputLogEvent, len(l)),
 	}
 
-	if token, ok := m.sequenceTokens[streamName]; ok {
+	token := m.getSequenceToken(streamName)
+
+	if token != "" {
 		logs.SequenceToken = aws.String(token)
 	}
 
@@ -464,6 +564,10 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 }
 
 func (m *Monitor) putLogs() {
+	logrus.WithFields(logrus.Fields{
+		"fn": "putLogs",
+	}).Info()
+
 	for _ = range time.Tick(100 * time.Millisecond) {
 		for _, id := range m.ids() {
 
@@ -479,14 +583,59 @@ func (m *Monitor) putLogs() {
 	}
 }
 
+func (m *Monitor) setSequenceToken(streamName, token string) {
+	logrus.WithFields(logrus.Fields{
+		"fn":         "setSequenceToken",
+		"streamName": streamName,
+		"token":      token,
+	}).Info()
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.sequenceTokens[streamName] = token
+}
+
+func (m *Monitor) getSequenceToken(streamName string) string {
+	logrus.WithFields(logrus.Fields{
+		"fn":         "getSequenceToken",
+		"streamName": streamName,
+	}).Info()
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return m.sequenceTokens[streamName]
+}
+
 func (m *Monitor) addLine(id string, data []byte) {
+	logrus.WithFields(logrus.Fields{
+		"fn":   "addLine",
+		"id":   id,
+		"data": elide(data),
+	}).Info()
+
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	m.lines[id] = append(m.lines[id], data)
 }
 
+func elide(data []byte) string {
+	s := string(data)
+	if len(s) < 20 {
+		return s
+	}
+
+	return s[0:20] + "..."
+}
+
 func (m *Monitor) getLines(id string) [][]byte {
+	// logrus.WithFields(logrus.Fields{
+	// 	"fn": "getLines",
+	// 	"id": id,
+	// }).Info()
+
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -508,6 +657,10 @@ func (m *Monitor) getLines(id string) [][]byte {
 }
 
 func (m *Monitor) ids() []string {
+	// logrus.WithFields(logrus.Fields{
+	// 	"fn": "ids",
+	// }).Info()
+
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
