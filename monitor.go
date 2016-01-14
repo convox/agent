@@ -263,6 +263,8 @@ func (m *Monitor) updateCgroups(id string, env map[string]string) {
 }
 
 func (m *Monitor) subscribeLogs(id string) {
+	fmt.Printf("monitor subscribeLogs id=%s\n", id)
+
 	env := m.envs[id]
 
 	logResource := m.logResource(id)
@@ -358,6 +360,8 @@ func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
 }
 
 func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
+	fmt.Printf("monitor putCloudWatchLogs id=%s\n", id)
+
 	Logs := cloudwatchlogs.New(&aws.Config{})
 
 	env := m.envs[id]
@@ -388,6 +392,8 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 			LogStreamNamePrefix: aws.String(streamName),
 		})
 
+		fmt.Printf("ns=agent at=putCloudWatchLogs.DescribeLogStreams group=%s stream=%s\n", logGroup, streamName)
+
 		if err != nil {
 			m.logInternalEvent(
 				fmt.Sprintf("ns=agent at=putCloudWatchLogs.DescribeLogStreams count#error.DescribeLogStreams=1 msg=%q", err.Error()),
@@ -402,6 +408,8 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 				LogGroupName:  aws.String(logGroup),
 				LogStreamName: aws.String(streamName),
 			})
+
+			fmt.Printf("ns=agent at=putCloudWatchLogs.CreateLogStream group=%s stream=%s\n", logGroup, streamName)
 
 			if err != nil {
 				m.logInternalEvent(
@@ -436,6 +444,8 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 	}
 
 	pres, err := Logs.PutLogEvents(logs)
+
+	fmt.Printf("ns=agent at=putCloudWatchLogs.PutLogEvents group=%s stream=%s events=%d sequenceToken=%s\n", logGroup, streamName, len(logs.LogEvents), m.sequenceTokens[streamName])
 
 	if err != nil {
 		m.logInternalEvent(
