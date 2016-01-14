@@ -176,7 +176,7 @@ func (m *Monitor) handleCreate(id string) {
 		return
 	}
 
-	m.envs[id] = env
+	m.setEnv(id, env)
 
 	m.logEvent(id, fmt.Sprintf("Starting process %s", id[0:12]))
 
@@ -210,7 +210,7 @@ func (m *Monitor) handleStart(id string) {
 		"id":  id,
 	}).Info()
 
-	m.updateCgroups(id, m.envs[id])
+	m.updateCgroups(id)
 }
 
 func (m *Monitor) handleStop(id string) {
@@ -255,7 +255,7 @@ func (m *Monitor) logResource(id string) string {
 		"id":  id,
 	}).Info()
 
-	env := m.envs[id]
+	env := m.getEnv(id)
 
 	logGroup := env["LOG_GROUP"]
 	kinesis := env["KINESIS"]
@@ -304,12 +304,13 @@ func (m *Monitor) logInternalEvent(message string, put bool) {
 // Modify the container cgroup to enable swap if SWAP=1 is set
 // Currently this only works on the Amazon ECS AMI, not Docker Machine and boot2docker
 // until a better strategy for knowing where the cgroup mount is implemented
-func (m *Monitor) updateCgroups(id string, env map[string]string) {
+func (m *Monitor) updateCgroups(id string) {
 	logrus.WithFields(logrus.Fields{
 		"_fn": "updateCgroups",
 		"id":  id,
-		"env": env,
 	}).Info()
+
+	env := m.getEnv(id)
 
 	if env["SWAP"] == "1" {
 		shortId := id[0:12]
@@ -345,7 +346,7 @@ func (m *Monitor) subscribeLogs(id string) {
 		"id":  id,
 	}).Info()
 
-	env := m.envs[id]
+	env := m.getEnv(id)
 
 	logResource := m.logResource(id)
 
@@ -416,7 +417,7 @@ func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
 
 	Kinesis := kinesis.New(&aws.Config{})
 
-	env := m.envs[id]
+	env := m.getEnv(id)
 
 	stream := env["KINESIS"]
 
@@ -462,7 +463,7 @@ func (m *Monitor) putCloudWatchLogs(id string, l [][]byte) {
 
 	Logs := cloudwatchlogs.New(&aws.Config{})
 
-	env := m.envs[id]
+	env := m.getEnv(id)
 
 	logGroup := env["LOG_GROUP"]
 	process := env["PROCESS"]
@@ -581,6 +582,31 @@ func (m *Monitor) putLogs() {
 			m.putKinesisLogs(id, l)
 		}
 	}
+}
+
+func (m *Monitor) setEnv(id string, env map[string]string) {
+	logrus.WithFields(logrus.Fields{
+		"_fn": "setEnv",
+		"id":  id,
+		"env": env,
+	}).Info()
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.envs[id] = env
+}
+
+func (m *Monitor) getEnv(id string) map[string]string {
+	logrus.WithFields(logrus.Fields{
+		"_fn": "getEnv",
+		"id":  id,
+	}).Info()
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return m.envs[id]
 }
 
 func (m *Monitor) setSequenceToken(streamName, token string) {
