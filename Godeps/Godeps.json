@@ -6,6 +6,11 @@
 	],
 	"Deps": [
 		{
+			"ImportPath": "github.com/Sirupsen/logrus",
+			"Comment": "v0.8.7-53-g446d1c1",
+			"Rev": "446d1c146faa8ed3f4218f056fcd165f6bcfda81"
+		},
+		{
 			"ImportPath": "github.com/aws/aws-sdk-go/aws",
 			"Comment": "v0.6.1-14-g7e9078c",
 			"Rev": "7e9078c250876f26da48aaf36b8dce6a462ecd8a"
