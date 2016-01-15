@@ -360,7 +360,7 @@ func (m *Monitor) subscribeLogs(id string) {
 	logrus.WithFields(logrus.Fields{
 		"_fn": "subscribeLogs",
 		"id":  id,
-	}).Info()
+	}).Info("start")
 
 	env := m.getEnv(id)
 
@@ -422,6 +422,12 @@ func (m *Monitor) subscribeLogs(id string) {
 	}
 
 	w.Close()
+
+	logrus.WithFields(logrus.Fields{
+		"_fn": "subscribeLogs",
+		"id":  id,
+		"err": err,
+	}).Info("end")
 }
 
 func (m *Monitor) putKinesisLogs(id string, l [][]byte) {
