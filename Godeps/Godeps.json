@@ -1,6 +1,6 @@
 {
 	"ImportPath": "github.com/convox/agent",
-	"GoVersion": "go1.5.2",
+	"GoVersion": "go1.5.1",
 	"Packages": [
 		"./..."
 	],
@@ -57,6 +57,11 @@
 		},
 		{
 			"ImportPath": "github.com/aws/aws-sdk-go/service/cloudwatchlogs",
+			"Comment": "v0.9.9",
+			"Rev": "c4ae871ffc03691a7b039fa751a1e7afee56e920"
+		},
+		{
+			"ImportPath": "github.com/aws/aws-sdk-go/service/ecs",
 			"Comment": "v0.9.9",
 			"Rev": "c4ae871ffc03691a7b039fa751a1e7afee56e920"
 		},
