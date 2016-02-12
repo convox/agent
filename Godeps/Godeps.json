@@ -1,6 +1,6 @@
 {
-	"ImportPath": "github.com/convox/rack/cmd/agent",
-	"GoVersion": "go1.5.2",
+	"ImportPath": "github.com/convox/agent",
+	"GoVersion": "go1.6rc2",
 	"Packages": [
 		"./..."
 	],
@@ -64,6 +64,10 @@
 			"ImportPath": "github.com/aws/aws-sdk-go/service/kinesis",
 			"Comment": "v0.9.9",
 			"Rev": "c4ae871ffc03691a7b039fa751a1e7afee56e920"
+		},
+		{
+			"ImportPath": "github.com/convox/rack/api/awsutil",
+			"Rev": "0806ba424ff665ab3e85c0b944daf8ef62eef814"
 		},
 		{
 			"ImportPath": "github.com/davecgh/go-spew/spew",

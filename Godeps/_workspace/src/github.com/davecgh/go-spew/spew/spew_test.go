@@ -23,7 +23,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/convox/rack/cmd/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
 )
 
 // spewFunc is used to identify which public function of the spew package or

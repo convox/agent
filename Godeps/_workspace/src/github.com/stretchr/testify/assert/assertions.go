@@ -14,8 +14,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/convox/rack/cmd/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
-	"github.com/convox/rack/cmd/agent/Godeps/_workspace/src/github.com/pmezard/go-difflib/difflib"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/pmezard/go-difflib/difflib"
 )
 
 // TestingT is an interface wrapper around *testing.T

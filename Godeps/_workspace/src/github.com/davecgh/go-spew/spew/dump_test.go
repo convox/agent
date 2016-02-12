@@ -67,7 +67,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/convox/rack/cmd/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
 )
 
 // dumpTest is used to describe a test to be perfomed against the Dump method.

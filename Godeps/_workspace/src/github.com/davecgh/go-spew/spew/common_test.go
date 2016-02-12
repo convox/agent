@@ -21,7 +21,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/convox/rack/cmd/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/davecgh/go-spew/spew"
 )
 
 // custom type to test Stinger interface on non-pointer receiver.
