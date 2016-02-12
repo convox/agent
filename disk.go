@@ -41,7 +41,9 @@ func (m *Monitor) Disk() {
 			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=root dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, root_util), true)
 		}
 
-		if root_util >= 99.9 {
+		// when root disk is very close to full, we expect degraded performance
+		// and problems launching new containers. Terminate.
+		if root_util >= 98.0 {
 			m.SetUnhealthy("disk", fmt.Errorf("root volume is %.2f%% full", root_util))
 		}
 	}
