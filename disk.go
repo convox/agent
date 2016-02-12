@@ -90,7 +90,7 @@ func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err err
 		}
 	}
 
-	if total == 0 {
+	if t == 0 {
 		err = fmt.Errorf("no docker volume information for %s driver", m.dockerDriver)
 		return
 	}
