@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/docker/go-units"
@@ -16,70 +17,112 @@ func (m *Monitor) Disk() {
 	m.logSystemMetric("disk at=start", "", true)
 
 	for _ = range time.Tick(MONITOR_INTERVAL) {
-		info, err := m.client.Info()
+		// Report Docker utilization
+		a, t, u, docker_util, err := m.DockerUtilization()
 
 		if err != nil {
 			m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
+		} else {
+			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=docker dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, docker_util), true)
 		}
-
-		status := [][]string{}
-
-		err = info.GetJSON("DriverStatus", &status)
-
-		if err != nil {
-			m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-			continue
-		}
-
-		var avail, total, used int64
-
-		for _, v := range status {
-			if v[0] == "Data Space Available" {
-				avail, err = units.FromHumanSize(v[1])
-
-				if err != nil {
-					m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-					continue
-				}
-			}
-
-			if v[0] == "Data Space Total" {
-				total, err = units.FromHumanSize(v[1])
-
-				if err != nil {
-					m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-					continue
-				}
-			}
-
-			if v[0] == "Data Space Used" {
-				used, err = units.FromHumanSize(v[1])
-
-				if err != nil {
-					m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-					continue
-				}
-			}
-		}
-
-		if total == 0 {
-			m.logSystemMetric("disk at=skip", fmt.Sprintf("driver=%s", m.dockerDriver), true)
-			continue
-		}
-
-		var a, t, u, util float64
-		a = float64(avail) / 1000 / 1000 / 1000
-		t = float64(total) / 1000 / 1000 / 1000
-		u = float64(used) / 1000 / 1000 / 1000
-		util = float64(used) / float64(total) * 100
-
-		m.logSystemMetric("disk", fmt.Sprintf("dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, util), true)
 
 		// If disk is over 80.0 full, delete docker containers and images in attempt to reclaim space
-		if util > 80.0 {
+		if docker_util > 80.0 {
 			m.RemoveDockerArtifacts()
 		}
+
+		// Report root volume utilization after artifacts have possibly been removed
+		path := "/mnt/host_root"
+		a, t, u, root_util, err := m.PathUtilization(path)
+
+		if err != nil {
+			m.logSystemMetric("disk at=error", fmt.Sprintf("path=%s err=%q", path, err), true)
+		} else {
+			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=root dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, root_util), true)
+		}
+
+		// when root disk is very close to full, we expect degraded performance
+		// and problems launching new containers. Terminate.
+		if root_util >= 98.0 {
+			m.SetUnhealthy("disk", fmt.Errorf("root volume is %.2f%% full", root_util))
+		}
 	}
+}
+
+func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err error) {
+	info, err := m.client.Info()
+
+	if err != nil {
+		return
+	}
+
+	status := [][]string{}
+
+	err = info.GetJSON("DriverStatus", &status)
+
+	if err != nil {
+		return
+	}
+
+	var a, t, u int64
+
+	for _, v := range status {
+		if v[0] == "Data Space Available" {
+			a, err = units.FromHumanSize(v[1])
+
+			if err != nil {
+				return
+			}
+		}
+
+		if v[0] == "Data Space Total" {
+			t, err = units.FromHumanSize(v[1])
+
+			if err != nil {
+				return
+			}
+		}
+
+		if v[0] == "Data Space Used" {
+			u, err = units.FromHumanSize(v[1])
+
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	if t == 0 {
+		err = fmt.Errorf("no docker volume information for %s driver", m.dockerDriver)
+		return
+	}
+
+	avail = float64(a) / 1000 / 1000 / 1000
+	total = float64(t) / 1000 / 1000 / 1000
+	used = float64(u) / 1000 / 1000 / 1000
+	util = used / total * 100
+
+	return
+}
+
+func (m *Monitor) PathUtilization(path string) (avail, total, used, util float64, err error) {
+	// https://github.com/StalkR/goircbot/blob/master/lib/disk/space_unix.go
+	s := syscall.Statfs_t{}
+	err = syscall.Statfs(path, &s)
+
+	if err != nil {
+		return
+	}
+
+	t := int(s.Bsize) * int(s.Blocks)
+	f := int(s.Bsize) * int(s.Bfree)
+
+	total = (float64)(t) / 1024 / 1024 / 1024
+	avail = (float64)(f) / 1024 / 1024 / 1024
+	used = (float64)(t-f) / 1024 / 1024 / 1024
+	util = used / (used + avail) * 100
+
+	return
 }
 
 // Force remove docker containers, volumes and images

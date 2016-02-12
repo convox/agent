@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
-
-	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws"
-	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/autoscaling"
 )
 
 // grep dmesg for file system error strings
@@ -28,21 +25,7 @@ func (m *Monitor) grep(pattern string) {
 
 	// grep returned 0
 	if err == nil {
-		m.logSystemMetric("dmesg at=error", fmt.Sprintf("count#AutoScaling.SetInstanceHealth=1 out=%q", out), true)
-
-		AutoScaling := autoscaling.New(&aws.Config{})
-
-		_, err := AutoScaling.SetInstanceHealth(&autoscaling.SetInstanceHealthInput{
-			HealthStatus:             aws.String("Unhealthy"),
-			InstanceId:               aws.String(m.instanceId),
-			ShouldRespectGracePeriod: aws.Bool(true),
-		})
-
-		if err != nil {
-			m.logSystemMetric("dmesg at=error", fmt.Sprintf("count#AutoScaling.SetInstanceHealth.error=1 err=%q", err), true)
-		}
-
-		m.ReportDmesg()
+		m.SetUnhealthy("dmesg", fmt.Errorf("dmesg reported %q", out))
 	} else {
 		m.logSystemMetric("dmesg at=ok", "", true)
 	}

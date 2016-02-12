@@ -10,6 +10,6 @@ vendor:
 	godep save -r -copy=true ./...
 
 release: build
-	docker tag -f convox/agent:latest convox/agent:0.63
-	docker push convox/agent:0.63
-	AWS_DEFAULT_PROFILE=release aws s3 cp convox.conf s3://convox/agent/0.63/convox.conf --acl public-read
+	docker tag -f convox/agent:latest convox/agent:0.64
+	docker push convox/agent:0.64
+	AWS_DEFAULT_PROFILE=release aws s3 cp convox.conf s3://convox/agent/0.64/convox.conf --acl public-read
