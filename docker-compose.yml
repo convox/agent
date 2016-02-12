@@ -9,6 +9,7 @@ agent:
     - KINESIS
     - LOG_GROUP
   volumes:
+    - /:/mnt/host_root
     - /cgroup:/cgroup
     - /var/run/docker.sock:/var/run/docker.sock
     - .:/go/src/github.com/convox/agent

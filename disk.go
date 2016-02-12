@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/docker/go-units"
@@ -16,6 +17,17 @@ func (m *Monitor) Disk() {
 	m.logSystemMetric("disk at=start", "", true)
 
 	for _ = range time.Tick(MONITOR_INTERVAL) {
+		// Report root volume utilization
+		path := "/mnt/host_root"
+		a, t, u, util, err := m.PathUtilization(path)
+
+		if err != nil {
+			m.logSystemMetric("disk at=error", fmt.Sprintf("path=%s err=%q", path, err), true)
+		} else {
+			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=root dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, util), true)
+		}
+
+		// Report Docker utilization
 		info, err := m.client.Info()
 
 		if err != nil {
@@ -80,6 +92,26 @@ func (m *Monitor) Disk() {
 			m.RemoveDockerArtifacts()
 		}
 	}
+}
+
+func (m *Monitor) PathUtilization(path string) (avail, total, used, util float64, err error) {
+	// https://github.com/StalkR/goircbot/blob/master/lib/disk/space_unix.go
+	s := syscall.Statfs_t{}
+	err = syscall.Statfs(path, &s)
+
+	if err != nil {
+		return
+	}
+
+	t := int(s.Bsize) * int(s.Blocks)
+	f := int(s.Bsize) * int(s.Bfree)
+
+	total = (float64)(t) / 1024 / 1024 / 1024
+	avail = (float64)(f) / 1024 / 1024 / 1024
+	used = (float64)(t-f) / 1024 / 1024 / 1024
+	util = used / (used + avail) * 100
+
+	return
 }
 
 // Force remove docker containers, volumes and images
