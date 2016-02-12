@@ -10,6 +10,7 @@ import (
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/aws/ec2metadata"
+	"github.com/convox/agent/Godeps/_workspace/src/github.com/aws/aws-sdk-go/service/autoscaling"
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/stvp/rollbar"
 
 	"github.com/convox/agent/Godeps/_workspace/src/github.com/docker/docker/daemon/logger"
@@ -195,4 +196,24 @@ func (m *Monitor) ReportError(err error) {
 	extraField := &rollbar.Field{"env", extraData}
 
 	rollbar.Error(rollbar.CRIT, err, extraField)
+}
+
+func (m *Monitor) SetUnhealthy(system string, reason error) {
+	prefix := fmt.Sprintf("%s at=error", system)
+
+	m.logSystemMetric(prefix, fmt.Sprintf("count#AutoScaling.SetInstanceHealth=1 err=%q", reason), true)
+
+	AutoScaling := autoscaling.New(&aws.Config{})
+
+	_, err := AutoScaling.SetInstanceHealth(&autoscaling.SetInstanceHealthInput{
+		HealthStatus:             aws.String("Unhealthy"),
+		InstanceId:               aws.String(m.instanceId),
+		ShouldRespectGracePeriod: aws.Bool(true),
+	})
+
+	if err != nil {
+		m.logSystemMetric(prefix, fmt.Sprintf("count#AutoScaling.SetInstanceHealth.error=1 err=%q", err), true)
+	}
+
+	m.ReportDmesg()
 }
