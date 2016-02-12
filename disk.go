@@ -28,70 +28,75 @@ func (m *Monitor) Disk() {
 		}
 
 		// Report Docker utilization
-		info, err := m.client.Info()
+		a, t, u, util, err = m.DockerUtilization(path)
 
 		if err != nil {
 			m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
+		} else {
+			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=docker dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, util), true)
 		}
-
-		status := [][]string{}
-
-		err = info.GetJSON("DriverStatus", &status)
-
-		if err != nil {
-			m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-			continue
-		}
-
-		var avail, total, used int64
-
-		for _, v := range status {
-			if v[0] == "Data Space Available" {
-				avail, err = units.FromHumanSize(v[1])
-
-				if err != nil {
-					m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-					continue
-				}
-			}
-
-			if v[0] == "Data Space Total" {
-				total, err = units.FromHumanSize(v[1])
-
-				if err != nil {
-					m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-					continue
-				}
-			}
-
-			if v[0] == "Data Space Used" {
-				used, err = units.FromHumanSize(v[1])
-
-				if err != nil {
-					m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
-					continue
-				}
-			}
-		}
-
-		if total == 0 {
-			m.logSystemMetric("disk at=skip", fmt.Sprintf("driver=%s", m.dockerDriver), true)
-			continue
-		}
-
-		var a, t, u, util float64
-		a = float64(avail) / 1000 / 1000 / 1000
-		t = float64(total) / 1000 / 1000 / 1000
-		u = float64(used) / 1000 / 1000 / 1000
-		util = float64(used) / float64(total) * 100
-
-		m.logSystemMetric("disk", fmt.Sprintf("dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, util), true)
 
 		// If disk is over 80.0 full, delete docker containers and images in attempt to reclaim space
 		if util > 80.0 {
 			m.RemoveDockerArtifacts()
 		}
 	}
+}
+
+func (m *Monitor) DockerUtilization(path string) (avail, total, used, util float64, err error) {
+	info, err := m.client.Info()
+
+	if err != nil {
+		return
+	}
+
+	status := [][]string{}
+
+	err = info.GetJSON("DriverStatus", &status)
+
+	if err != nil {
+		return
+	}
+
+	var a, t, u int64
+
+	for _, v := range status {
+		if v[0] == "Data Space Available" {
+			a, err = units.FromHumanSize(v[1])
+
+			if err != nil {
+				return
+			}
+		}
+
+		if v[0] == "Data Space Total" {
+			t, err = units.FromHumanSize(v[1])
+
+			if err != nil {
+				return
+			}
+		}
+
+		if v[0] == "Data Space Used" {
+			u, err = units.FromHumanSize(v[1])
+
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	if total == 0 {
+		err = fmt.Errorf("no docker volume information for %s driver", m.dockerDriver)
+		return
+	}
+
+	avail = float64(a) / 1000 / 1000 / 1000
+	total = float64(t) / 1000 / 1000 / 1000
+	used = float64(u) / 1000 / 1000 / 1000
+	util = used / total * 100
+
+	return
 }
 
 func (m *Monitor) PathUtilization(path string) (avail, total, used, util float64, err error) {
