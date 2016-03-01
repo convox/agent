@@ -111,6 +111,8 @@ func NewMonitor() *Monitor {
 
 	// initialize key CloudWatch Custom Metrics
 	m.logSystemMetric("monitor at=new", "count#DockerError=0 count#DmesgError=0", false)
+	m.logSystemMetric("monitor at=new", "count#DockerEventCreate=0 count#DockerEventDie=0 count#DockerEventKill=0 count#DockerEventOom=0 count#DockerEventStart=0 count#DockerEventStop=0", false)
+	m.logSystemMetric("monitor at=new", "count#DockerInspectError=0", false)
 	m.logSystemMetric("monitor at=new", "count#ScannerError=0 count#DockerLogsError=0 count#DockerInspectContainerError=0", false)
 	m.logSystemMetric("monitor at=new", "count#KinesisPutRecordsError count#KinesisRecordsSuccesses=0 count#KinesisRecordsErrors=0", false)
 
@@ -205,7 +207,7 @@ func (m *Monitor) ReportError(err error) {
 
 func (m *Monitor) SetUnhealthy(system string, reason error) {
 	prefix := fmt.Sprintf("agent setunhealthy system=%s at=fatal", system)
-	metric := strings.ToUpper(system[0:1]) + strings.ToLower(system[1:len(system)]) + "Error" // DockerError or DmesgError
+	metric := ucfirst(system) + "Error" // DockerError or DmesgError
 
 	m.logSystemMetric(prefix, fmt.Sprintf("count#%s=1 err=%q", metric, reason), true)
 
@@ -222,4 +224,8 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 	}
 
 	m.ReportDmesg()
+}
+
+func ucfirst(s string) string {
+	return strings.ToUpper(s[0:1]) + strings.ToLower(s[1:len(s)])
 }

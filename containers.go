@@ -82,7 +82,8 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 			shortId = shortId[0:12]
 		}
 
-		fmt.Printf("monitor event id=%s status=%s time=%d\n", shortId, event.Status, event.Time)
+		metric := "DockerEvent" + ucfirst(event.Status)
+		m.logSystemMetric("container handleEvents", fmt.Sprintf("id=%s time=%d count#%s=1", event.ID, event.Time, metric), true)
 
 		switch event.Status {
 		case "create":
@@ -91,6 +92,8 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 			m.handleDie(event.ID)
 		case "kill":
 			m.handleKill(event.ID)
+		case "oom":
+			m.handleOom(event.ID)
 		case "start":
 			m.handleStart(event.ID)
 		case "stop":
@@ -105,7 +108,7 @@ func (m *Monitor) handleCreate(id string) {
 	container, env, err := m.inspectContainer(id)
 
 	if err != nil {
-		log.Printf("error: %s\n", err)
+		m.logSystemMetric("container handleCreate at=error", fmt.Sprintf("count#DockerInspectError=1 err=%q", err), true)
 		return
 	}
 
@@ -123,18 +126,47 @@ func (m *Monitor) handleCreate(id string) {
 		}
 	}
 
-	m.logAppEvent(id, fmt.Sprintf("Starting process %s", id[0:12]))
+	msg := fmt.Sprintf("Starting process %s", id[0:12])
+
+	if p := env["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Starting %s process %s", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleDie(id string) {
 	// While we could remove a container and volumes on this event
 	// It seems like explicitly doing a `docker run --rm` is the best way
 	// to state this intent.
-	m.logAppEvent(id, fmt.Sprintf("Dead process %s", id[0:12]))
+
+	msg := fmt.Sprintf("Dead process %s", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Dead %s process %s", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleKill(id string) {
-	m.logAppEvent(id, fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12]))
+	msg := fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Stopped %s process %s via SIGKILL", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
+}
+
+func (m *Monitor) handleOom(id string) {
+	msg := fmt.Sprintf("Stopped process %s due to OOM", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Stopped %s process %s via OOM", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleStart(id string) {
@@ -146,7 +178,13 @@ func (m *Monitor) handleStart(id string) {
 }
 
 func (m *Monitor) handleStop(id string) {
-	m.logAppEvent(id, fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12]))
+	msg := fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Stopped %s process %s via SIGTERM", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) inspectContainer(id string) (*docker.Container, map[string]string, error) {
