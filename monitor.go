@@ -108,7 +108,11 @@ func NewMonitor() *Monitor {
 	)
 
 	m.logSystemMetric("monitor at=new", message, true)
-	m.logSystemMetric("monitor at=new", "count#DockerError=0 count#DmesgError=0", true) // initialize key CloudWatch Custom Metrics
+
+	// initialize key CloudWatch Custom Metrics
+	m.logSystemMetric("monitor at=new", "count#DockerError=0 count#DmesgError=0", false)
+	m.logSystemMetric("monitor at=new", "count#ScannerError=0 count#DockerLogsError=0 count#DockerInspectContainerError=0", false)
+	m.logSystemMetric("monitor at=new", "count#KinesisPutRecordsError count#KinesisRecordsSuccesses=0 count#KinesisRecordsErrors=0", false)
 
 	return m
 }

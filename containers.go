@@ -263,7 +263,7 @@ func (m *Monitor) subscribeLogs(id string) {
 		}
 
 		if scanner.Err() != nil {
-			m.logSystemMetric("container subscribeLogs.Scan at=error", fmt.Sprintf("count#scanner.error=1 err=%q", scanner.Err().Error()), true)
+			m.logSystemMetric("container subscribeLogs.Scan at=error", fmt.Sprintf("count#ScannerError=1 err=%q", scanner.Err().Error()), true)
 		}
 
 		m.logSystemMetric("container subscribeLogs.Scan at=return", fmt.Sprintf("prefix=%s", prefix), true)
@@ -273,7 +273,7 @@ func (m *Monitor) subscribeLogs(id string) {
 	since := time.Unix(0, 0).Unix()
 
 	for {
-		m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s since=%d count#docker.Logs.start=1", id, since), true)
+		m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s since=%d", id, since), true)
 
 		err := m.client.Logs(docker.LogsOptions{
 			Since:        since,
@@ -290,13 +290,13 @@ func (m *Monitor) subscribeLogs(id string) {
 		since = time.Now().Unix() // update cursor to now in anticipation of retry
 
 		if err != nil {
-			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#docker.Logs.error=1 err=%q", id, err), true)
+			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#DockerLogsError=1 err=%q", id, err), true)
 		}
 
 		container, err := m.client.InspectContainer(id)
 
 		if err != nil {
-			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#docker.InspectContainer.error=1 err=%q", id, err), true)
+			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#DockerInspectContainerError=1 err=%q", id, err), true)
 			break
 		}
 
@@ -375,7 +375,7 @@ func (m *Monitor) streamLogs() {
 			res, err := Kinesis.PutRecords(records)
 
 			if err != nil {
-				m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#Kinesis.PutRecords.error=1 err=%q", stream, err), false)
+				m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#KinesisPutRecordsError=1 err=%q", stream, err), false)
 			}
 
 			errorCount := 0
@@ -388,7 +388,7 @@ func (m *Monitor) streamLogs() {
 				}
 			}
 
-			m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#Kinesis.PutRecords.records=%d count#Kinesis.PutRecords.errors=%d err=%q", stream, len(res.Records), errorCount, errorMsg), false)
+			m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#KinesisRecordsSuccesses=%d count#KinesisRecordsErrors=%d err=%q", stream, len(res.Records), errorCount, errorMsg), false)
 		}
 	}
 }
