@@ -171,8 +171,6 @@ func (m *Monitor) inspectContainer(id string) (*docker.Container, map[string]str
 }
 
 // Modify the container cgroup to enable swap if SWAP=1 is set
-// Currently this only works on the Amazon ECS AMI, not Docker Machine and boot2docker
-// until a better strategy for knowing where the cgroup mount is implemented
 func (m *Monitor) updateCgroups(id string) {
 	env := m.envs[id]
 
