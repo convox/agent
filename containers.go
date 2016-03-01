@@ -175,6 +175,8 @@ func (m *Monitor) updateCgroups(id string) {
 	env := m.envs[id]
 
 	if env["SWAP"] == "1" {
+		time.Sleep(1 * time.Second)
+
 		shortId := id[0:12]
 
 		bytes := "18446744073709551615"
