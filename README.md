@@ -44,19 +44,35 @@ agent | monitor upload to=kinesis stream="convox-Kinesis-2NQ3Q5ASHY1N" lines=21
 Run a Docker container to see cgroup fun:
 
 ```bash
-$ docker run -e SWAP=1 redis
+$ docker run -m 4MB rabbitmq
+Killed
+
+$ docker run -e SWAP=1 -m 4MB rabbitmq
+
+              RabbitMQ 3.6.0. Copyright (C) 2007-2015 Pivotal Software, Inc.
+  ##  ##      Licensed under the MPL.  See http://www.rabbitmq.com/
+  ##  ##
+  ##########  Logs: tty
+  ######  ##        tty
+  ##########
+              Starting broker...
+...
 ```
 
 ```
-agent | monitor event id=6176a834e31a status=create
-agent | monitor event id=6176a834e31a status=attach
-agent | monitor event id=6176a834e31a status=start
-agent | monitor cgroups id=6176a834e31a cgroup=memory.memsw.limit_in_bytes value=18446744073709551615
-agent | error: open /cgroup/memory/docker/6176a834e31ac355bcc18dc83a113c64bd00ada284dd9e61153ed18715438365/memory.memsw.limit_in_bytes: no such file or directory
-agent | monitor cgroups id=6176a834e31a cgroup=memory.soft_limit_in_bytes value=18446744073709551615
-agent | error: open /cgroup/memory/docker/6176a834e31ac355bcc18dc83a113c64bd00ada284dd9e61153ed18715438365/memory.soft_limit_in_bytes: no such file or directory
-agent | monitor cgroups id=6176a834e31a cgroup=memory.limit_in_bytes value=18446744073709551615
-agent | error: open /cgroup/memory/docker/6176a834e31ac355bcc18dc83a113c64bd00ada284dd9e61153ed18715438365/memory.limit_in_bytes: no such file or directory
+agent | monitor event id=34c639f071e9 status=create time=1456858799
+agent | monitor event id=34c639f071e9 status=attach time=1456858799
+agent | monitor event id=34c639f071e9 status=start time=1456858799
+agent | monitor event id=34c639f071e9 status=oom time=1456858802
+agent | monitor event id=34c639f071e9 status=die time=1456858803
+
+
+agent | monitor event id=aadfffc88cb0 status=create time=1456858855
+agent | monitor event id=aadfffc88cb0 status=attach time=1456858855
+agent | monitor event id=aadfffc88cb0 status=start time=1456858855
+agent | monitor cgroups id=aadfffc88cb0 cgroup=memory.memsw.limit_in_bytes value=18446744073709551615
+agent | monitor cgroups id=aadfffc88cb0 cgroup=memory.soft_limit_in_bytes value=18446744073709551615
+agent | monitor cgroups id=aadfffc88cb0 cgroup=memory.limit_in_bytes value=18446744073709551615
 ```
 
 ## Release
