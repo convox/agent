@@ -82,9 +82,6 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 			shortId = shortId[0:12]
 		}
 
-		metric := "DockerEvent" + ucfirst(event.Status)
-		m.logSystemMetric("container handleEvents", fmt.Sprintf("id=%s time=%d count#%s=1", event.ID, event.Time, metric), true)
-
 		switch event.Status {
 		case "create":
 			m.handleCreate(event.ID)
@@ -99,6 +96,15 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 		case "stop":
 			m.handleStop(event.ID)
 		}
+
+		metric := "DockerEvent" + ucfirst(event.Status)
+		msg := fmt.Sprintf("id=%s time=%d count#%s=1", event.ID, event.Time, metric)
+
+		if p := m.envs[event.ID]["PROCESS"]; p != "" {
+			msg = fmt.Sprintf("id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
+		}
+
+		m.logSystemMetric("container handleEvents", msg, true)
 	}
 }
 
