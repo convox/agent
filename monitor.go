@@ -108,6 +108,7 @@ func NewMonitor() *Monitor {
 	)
 
 	m.logSystemMetric("monitor at=new", message, true)
+	m.logSystemMetric("monitor at=new", "count#DockerError=0 count#DmesgError=0", true) // initialize key CloudWatch Custom Metrics
 
 	return m
 }
@@ -199,9 +200,10 @@ func (m *Monitor) ReportError(err error) {
 }
 
 func (m *Monitor) SetUnhealthy(system string, reason error) {
-	prefix := fmt.Sprintf("%s at=error", system)
+	prefix := fmt.Sprintf("agent setunhealthy system=%s at=fatal", system)
+	metric := strings.ToUpper(system[0:1]) + strings.ToLower(system[1:len(system)]) + "Error" // DockerError or DmesgError
 
-	m.logSystemMetric(prefix, fmt.Sprintf("count#AutoScaling.SetInstanceHealth=1 err=%q", reason), true)
+	m.logSystemMetric(prefix, fmt.Sprintf("count#%s=1 err=%q", metric, reason), true)
 
 	AutoScaling := autoscaling.New(&aws.Config{})
 
