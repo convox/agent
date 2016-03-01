@@ -175,6 +175,8 @@ func (m *Monitor) updateCgroups(id string) {
 	env := m.envs[id]
 
 	if env["SWAP"] == "1" {
+		// sleep to address observed race for cgroups setup
+		// error: open /cgroup/memory/docker/6a3ea224a5e26657207f6c3d3efad072e3a5b02ec3e80a5a064909d9f882e402/memory.memsw.limit_in_bytes: no such file or directory
 		time.Sleep(1 * time.Second)
 
 		shortId := id[0:12]
