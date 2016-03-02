@@ -82,8 +82,6 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 			shortId = shortId[0:12]
 		}
 
-		fmt.Printf("monitor event id=%s status=%s time=%d\n", shortId, event.Status, event.Time)
-
 		switch event.Status {
 		case "create":
 			m.handleCreate(event.ID)
@@ -91,11 +89,24 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 			m.handleDie(event.ID)
 		case "kill":
 			m.handleKill(event.ID)
+		case "oom":
+			m.handleOom(event.ID)
 		case "start":
 			m.handleStart(event.ID)
 		case "stop":
 			m.handleStop(event.ID)
 		}
+
+		metric := "DockerEvent" + ucfirst(event.Status)
+		msg := fmt.Sprintf("id=%s time=%d count#%s=1", event.ID, event.Time, metric)
+
+		if env, ok := m.envs[event.ID]; ok {
+			if p := env["PROCESS"]; p != "" {
+				msg = fmt.Sprintf("id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
+			}
+		}
+
+		m.logSystemMetric("container handleEvents", msg, true)
 	}
 }
 
@@ -105,7 +116,7 @@ func (m *Monitor) handleCreate(id string) {
 	container, env, err := m.inspectContainer(id)
 
 	if err != nil {
-		log.Printf("error: %s\n", err)
+		m.logSystemMetric("container handleCreate at=error", fmt.Sprintf("count#DockerInspectError=1 err=%q", err), true)
 		return
 	}
 
@@ -123,18 +134,47 @@ func (m *Monitor) handleCreate(id string) {
 		}
 	}
 
-	m.logAppEvent(id, fmt.Sprintf("Starting process %s", id[0:12]))
+	msg := fmt.Sprintf("Starting process %s", id[0:12])
+
+	if p := env["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Starting %s process %s", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleDie(id string) {
 	// While we could remove a container and volumes on this event
 	// It seems like explicitly doing a `docker run --rm` is the best way
 	// to state this intent.
-	m.logAppEvent(id, fmt.Sprintf("Dead process %s", id[0:12]))
+
+	msg := fmt.Sprintf("Dead process %s", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Dead %s process %s", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleKill(id string) {
-	m.logAppEvent(id, fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12]))
+	msg := fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Stopped %s process %s via SIGKILL", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
+}
+
+func (m *Monitor) handleOom(id string) {
+	msg := fmt.Sprintf("Stopped process %s due to OOM", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Stopped %s process %s due to OOM", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleStart(id string) {
@@ -146,7 +186,13 @@ func (m *Monitor) handleStart(id string) {
 }
 
 func (m *Monitor) handleStop(id string) {
-	m.logAppEvent(id, fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12]))
+	msg := fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12])
+
+	if p := m.envs[id]["PROCESS"]; p != "" {
+		msg = fmt.Sprintf("Stopped %s process %s via SIGTERM", p, id[0:12])
+	}
+
+	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) inspectContainer(id string) (*docker.Container, map[string]string, error) {
@@ -171,12 +217,14 @@ func (m *Monitor) inspectContainer(id string) (*docker.Container, map[string]str
 }
 
 // Modify the container cgroup to enable swap if SWAP=1 is set
-// Currently this only works on the Amazon ECS AMI, not Docker Machine and boot2docker
-// until a better strategy for knowing where the cgroup mount is implemented
 func (m *Monitor) updateCgroups(id string) {
 	env := m.envs[id]
 
 	if env["SWAP"] == "1" {
+		// sleep to address observed race for cgroups setup
+		// error: open /cgroup/memory/docker/6a3ea224a5e26657207f6c3d3efad072e3a5b02ec3e80a5a064909d9f882e402/memory.memsw.limit_in_bytes: no such file or directory
+		time.Sleep(1 * time.Second)
+
 		shortId := id[0:12]
 
 		bytes := "18446744073709551615"
@@ -261,7 +309,7 @@ func (m *Monitor) subscribeLogs(id string) {
 		}
 
 		if scanner.Err() != nil {
-			m.logSystemMetric("container subscribeLogs.Scan at=error", fmt.Sprintf("count#scanner.error=1 err=%q", scanner.Err().Error()), true)
+			m.logSystemMetric("container subscribeLogs.Scan at=error", fmt.Sprintf("count#ScannerError=1 err=%q", scanner.Err().Error()), true)
 		}
 
 		m.logSystemMetric("container subscribeLogs.Scan at=return", fmt.Sprintf("prefix=%s", prefix), true)
@@ -271,7 +319,7 @@ func (m *Monitor) subscribeLogs(id string) {
 	since := time.Unix(0, 0).Unix()
 
 	for {
-		m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s since=%d count#docker.Logs.start=1", id, since), true)
+		m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s since=%d", id, since), true)
 
 		err := m.client.Logs(docker.LogsOptions{
 			Since:        since,
@@ -288,13 +336,13 @@ func (m *Monitor) subscribeLogs(id string) {
 		since = time.Now().Unix() // update cursor to now in anticipation of retry
 
 		if err != nil {
-			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#docker.Logs.error=1 err=%q", id, err), true)
+			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#DockerLogsError=1 err=%q", id, err), true)
 		}
 
 		container, err := m.client.InspectContainer(id)
 
 		if err != nil {
-			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#docker.InspectContainer.error=1 err=%q", id, err), true)
+			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#DockerInspectContainerError=1 err=%q", id, err), true)
 			break
 		}
 
@@ -373,7 +421,7 @@ func (m *Monitor) streamLogs() {
 			res, err := Kinesis.PutRecords(records)
 
 			if err != nil {
-				m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#Kinesis.PutRecords.error=1 err=%q", stream, err), false)
+				m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#KinesisPutRecordsError=1 err=%q", stream, err), false)
 			}
 
 			errorCount := 0
@@ -386,7 +434,7 @@ func (m *Monitor) streamLogs() {
 				}
 			}
 
-			m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#Kinesis.PutRecords.records=%d count#Kinesis.PutRecords.errors=%d err=%q", stream, len(res.Records), errorCount, errorMsg), false)
+			m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#KinesisRecordsSuccesses=%d count#KinesisRecordsErrors=%d err=%q", stream, len(res.Records), errorCount, errorMsg), false)
 		}
 	}
 }

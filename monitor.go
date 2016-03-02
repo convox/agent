@@ -199,9 +199,10 @@ func (m *Monitor) ReportError(err error) {
 }
 
 func (m *Monitor) SetUnhealthy(system string, reason error) {
-	prefix := fmt.Sprintf("%s at=error", system)
+	prefix := fmt.Sprintf("agent setunhealthy system=%s at=fatal", system)
+	metric := ucfirst(system) + "Error" // DockerError or DmesgError
 
-	m.logSystemMetric(prefix, fmt.Sprintf("count#AutoScaling.SetInstanceHealth=1 err=%q", reason), true)
+	m.logSystemMetric(prefix, fmt.Sprintf("count#%s=1 err=%q", metric, reason), true)
 
 	AutoScaling := autoscaling.New(&aws.Config{})
 
@@ -216,4 +217,8 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 	}
 
 	m.ReportDmesg()
+}
+
+func ucfirst(s string) string {
+	return strings.ToUpper(s[0:1]) + strings.ToLower(s[1:len(s)])
 }
