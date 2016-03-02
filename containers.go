@@ -100,8 +100,10 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 		metric := "DockerEvent" + ucfirst(event.Status)
 		msg := fmt.Sprintf("id=%s time=%d count#%s=1", event.ID, event.Time, metric)
 
-		if p := m.envs[event.ID]["PROCESS"]; p != "" {
-			msg = fmt.Sprintf("id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
+		if env, ok := m.envs[event.ID]; ok {
+			if p := env["PROCESS"]; p != "" {
+				msg = fmt.Sprintf("id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
+			}
 		}
 
 		m.logSystemMetric("container handleEvents", msg, true)
