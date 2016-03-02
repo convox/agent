@@ -171,7 +171,7 @@ func (m *Monitor) handleOom(id string) {
 	msg := fmt.Sprintf("Stopped process %s due to OOM", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s via OOM", p, id[0:12])
+		msg = fmt.Sprintf("Stopped %s process %s due to OOM", p, id[0:12])
 	}
 
 	m.logAppEvent(id, msg)
