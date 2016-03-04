@@ -6,28 +6,43 @@ import (
 	"time"
 )
 
-// interact with dockerd for docker errors
-// if `docker ps` exits non-zero we mark the instance unhealthy
+// interact with dockerd to detect docker errors
+// try `docker ps` 5 times
+// if it returns normally once, consider the system healthy
+// if it hangs for >30s every time, consider the system unhealthy
 func (m *Monitor) Docker() {
 	m.logSystemMetric("docker at=start", "", true)
 
 	for _ = range time.Tick(MONITOR_INTERVAL) {
-		cmd := exec.Command("docker", "ps")
+		var err error
+		unhealthy := true
 
-		if err := cmd.Start(); err != nil {
-			m.logSystemMetric("docker at=error", fmt.Sprintf("count#Command.Start.error=1 err=%q", err), true)
-			continue
+		for i := 0; i < 5; i++ {
+			fmt.Printf("docker try=%d\n", i)
+
+			cmd := exec.Command("docker", "ps")
+
+			if err := cmd.Start(); err != nil {
+				m.logSystemMetric("docker at=error", fmt.Sprintf("count#DockerCommandStart.error=1 err=%q", err), true)
+				continue
+			}
+
+			timer := time.AfterFunc(30*time.Second, func() {
+				cmd.Process.Kill()
+			})
+
+			err = cmd.Wait()
+			timer.Stop()
+
+			// docker ps command returned 0
+			if err == nil {
+				unhealthy = false
+				break
+			}
 		}
 
-		timer := time.AfterFunc(10*time.Second, func() {
-			cmd.Process.Kill()
-		})
-
-		err := cmd.Wait()
-		timer.Stop()
-
-		// docker ps returned non-zero
-		if err != nil {
+		// docker ps never ran without error
+		if unhealthy {
 			m.SetUnhealthy("docker", err)
 		} else {
 			m.logSystemMetric("docker at=ok", "", true)
