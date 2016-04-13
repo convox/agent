@@ -406,6 +406,20 @@ func (m *Monitor) streamLogs() {
 				continue
 			}
 
+			// emit telemetry about how many lines total we've seen from the Docker API
+			// These metrics can be compared to CloudWatch IncomingLogEvents and IncomingRecords
+			// to understand log delivery rate.
+
+			// extract app name from kinesis
+			// myapp-staging-Kinesis-L6MUKT1VH451 -> myapp-staging
+			app := stream
+			parts := strings.Split(stream, "-")
+			if len(parts) > 2 {
+				app = strings.Join(parts[0:len(parts)-2], "-") // drop -Kinesis-YXXX
+			}
+
+			m.logSystemMetric("container streamLogs", fmt.Sprintf("dim#app=%s count#Lines=%d", app, len(l)), false)
+
 			records := &kinesis.PutRecordsInput{
 				Records:    make([]*kinesis.PutRecordsRequestEntry, len(l)),
 				StreamName: aws.String(stream),
