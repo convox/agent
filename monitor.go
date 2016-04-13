@@ -220,5 +220,8 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 }
 
 func ucfirst(s string) string {
+	if s == "" {
+		return ""
+	}
 	return strings.ToUpper(s[0:1]) + strings.ToLower(s[1:len(s)])
 }
