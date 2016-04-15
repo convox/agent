@@ -272,15 +272,6 @@ func (m *Monitor) subscribeLogs(id string) {
 
 	m.logSystemMetric("container subscribeLogs at=start", fmt.Sprintf("id=%s kinesis=%s logGroup=%s process=%s", id, kinesis, logGroup, process), true)
 
-	// extract app name from kinesis or logGroup
-	// myapp-staging-Kinesis-L6MUKT1VH451 -> myapp-staging
-	app := ""
-
-	parts := strings.Split(logResource, "-")
-	if len(parts) > 2 {
-		app = strings.Join(parts[0:len(parts)-2], "-") // drop -Kinesis-YXXX
-	}
-
 	r, w := io.Pipe()
 
 	go func(prefix string, r io.ReadCloser) {
@@ -292,18 +283,36 @@ func (m *Monitor) subscribeLogs(id string) {
 
 		for scanner.Scan() {
 			text := scanner.Text()
+			// The expectation is a single log line from the Docker daemon:
+			// 2016-04-14T23:29:35.995734263Z Hello from Docker.
 
-			line := []byte(fmt.Sprintf("%s %s %s/%s:%s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, app, process, release, text))
+			// split and parse docker timestamp
+			ts := time.Now()
+
+			parts := strings.SplitN(text, " ", 2)
+			if len(parts) == 2 {
+				t, err := time.Parse(time.RFC3339Nano, parts[0])
+				if err != nil {
+					fmt.Printf("container subscribeLogs.Scan time.Parse err=%q\n", err)
+				} else {
+					ts = t
+					text = parts[1]
+				}
+			}
+
+			// append syslog-ish prefix:
+			// web:RXZMCQEPDKO/1d11a78279e0 Hello from Docker.
+			line := fmt.Sprintf("%s:%s/%s %s", process, release, id[0:12], text)
 
 			if kinesis != "" {
-				m.addLine(kinesis, line)
+				m.addLine(kinesis, []byte(fmt.Sprintf("%s %s", ts.Format("2006-01-02 15:04:05"), line))) // add timestamp to kinesis for legacy purposes
 			}
 
 			if awslogger, ok := m.loggers[id]; ok {
 				awslogger.Log(&logger.Message{
 					ContainerID: id,
-					Line:        line,
-					Timestamp:   time.Now(),
+					Line:        []byte(line),
+					Timestamp:   ts,
 				})
 			}
 		}
@@ -316,7 +325,8 @@ func (m *Monitor) subscribeLogs(id string) {
 	}(process, r)
 
 	// tail docker logs and write to pipe
-	since := time.Unix(0, 0).Unix()
+	// start close to Now() so agent restarts dont replay too many logs
+	since := time.Now().Add(-15 * time.Second).Unix()
 
 	for {
 		m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s since=%d", id, since), true)
@@ -328,6 +338,7 @@ func (m *Monitor) subscribeLogs(id string) {
 			Stdout:       true,
 			Stderr:       true,
 			Tail:         "all",
+			Timestamps:   true,
 			RawTerminal:  false,
 			OutputStream: w,
 			ErrorStream:  w,
