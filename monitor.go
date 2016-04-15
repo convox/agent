@@ -94,7 +94,7 @@ func NewMonitor() *Monitor {
 
 	svc := ec2metadata.New(&cfg)
 
-	if svc.Available() {
+	if os.Getenv("DEVELOPMENT") != "true" && svc.Available() {
 		m.amiId, _ = svc.GetMetadata("ami-id")
 		m.az, _ = svc.GetMetadata("placement/availability-zone")
 		m.instanceId, _ = svc.GetMetadata("instance-id")

@@ -8,6 +8,7 @@ agent:
     - AWS_SECRET_ACCESS_KEY
     - KINESIS
     - LOG_GROUP
+    - DEVELOPMENT=true
   volumes:
     - /:/mnt/host_root
     - /sys/fs/cgroup:/cgroup
