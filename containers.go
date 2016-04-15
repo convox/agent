@@ -46,6 +46,11 @@ func (m *Monitor) handleRunning() {
 		if strings.HasPrefix(img, "convox/agent") || strings.HasPrefix(img, "agent/agent") {
 			m.agentId = container.ID
 			m.agentImage = img
+
+			parts := strings.SplitN(img, ":", 2)
+			if len(parts) == 2 {
+				m.agentVersion = parts[1]
+			}
 		}
 
 		fmt.Printf("monitor event id=%s status=started\n", shortId)

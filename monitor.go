@@ -22,8 +22,9 @@ type Monitor struct {
 
 	envs map[string]map[string]string
 
-	agentId    string
-	agentImage string
+	agentId      string
+	agentImage   string
+	agentVersion string
 
 	amiId        string
 	az           string
@@ -68,8 +69,9 @@ func NewMonitor() *Monitor {
 
 		envs: make(map[string]map[string]string),
 
-		agentId:    "unknown",          // updated during handleRunning
-		agentImage: "convox/agent:dev", // updated during handleRunning
+		agentId:      "unknown",          // updated during handleRunning
+		agentImage:   "convox/agent:dev", // updated during handleRunning
+		agentVersion: "dev",              // updated during handleRunning
 
 		amiId:        "ami-dev",
 		az:           "us-dev-1b",
@@ -114,18 +116,23 @@ func NewMonitor() *Monitor {
 
 // Write event to app CloudWatch Log Group and Kinesis stream
 func (m *Monitor) logAppEvent(id, message string) {
-	msg := []byte(fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.agentImage, message))
+	// append syslog-ish prefix:
+	// agent:0.66/i-553ffcd2 Starting hello-world process 977a93d4d48e
+
+	msg := fmt.Sprintf("agent:%s/%s %s", m.agentVersion, m.instanceId, message)
+
+	ts := time.Now()
 
 	if awslogger, ok := m.loggers[id]; ok {
 		awslogger.Log(&logger.Message{
 			ContainerID: id,
-			Line:        msg,
-			Timestamp:   time.Now(),
+			Line:        []byte(msg),
+			Timestamp:   ts,
 		})
 	}
 
 	if stream, ok := m.envs[id]["KINESIS"]; ok {
-		m.addLine(stream, msg)
+		m.addLine(stream, []byte(fmt.Sprintf("%s %s", ts.Format("2006-01-02 15:04:05"), msg))) // add timestamp to kinesis for legacy purposes
 	}
 }
 
@@ -136,18 +143,18 @@ func (m *Monitor) logSystemMetric(prefix, message string, kinesis bool) {
 	fmt.Println(message)
 
 	id := m.agentId
-	msg := []byte(fmt.Sprintf("%s %s %s : %s", time.Now().Format("2006-01-02 15:04:05"), m.instanceId, m.agentImage, message))
+	msg := fmt.Sprintf("agent:%s/%s %s", m.agentVersion, m.instanceId, message)
 
 	if awslogger, ok := m.loggers[id]; ok {
 		awslogger.Log(&logger.Message{
 			ContainerID: id,
-			Line:        msg,
+			Line:        []byte(msg),
 			Timestamp:   time.Now(),
 		})
 	}
 
 	if stream, ok := m.envs[id]["KINESIS"]; kinesis && ok {
-		m.addLine(stream, msg)
+		m.addLine(stream, []byte(msg))
 	}
 }
 
