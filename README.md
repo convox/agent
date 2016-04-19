@@ -30,7 +30,7 @@ agent | disk monitor upload to=kinesis stream="convox-Kinesis-2NQ3Q5ASHY1N" line
 Run a Docker container to see Docker event Kinesis and CloudWatch Logs upload activity:
 
 ```bash
-$ docker run -e KINESIS=convox-Kinesis-2NQ3Q5ASHY1N -e LOG_GROUP=convox-LogGroup-9I65CAJ6OLO9 -e PROCESS=hello-world -e RELEASE=RXBKPDQEGDU hello-world
+$ docker run -e KINESIS=convox-Kinesis-8WL8ZDHOGV5F -e LOG_GROUP=convox-LogGroup-V21KNCGSV61R -e PROCESS=hello-world -e RELEASE=RXBKPDQEGDU hello-world
 ```
 
 ```
@@ -44,10 +44,10 @@ agent | monitor upload to=kinesis stream="convox-Kinesis-2NQ3Q5ASHY1N" lines=21
 Run a Docker container to see cgroup fun:
 
 ```bash
-$ docker run -m 4MB rabbitmq
+$ docker run -m 50MB rabbitmq
 Killed
 
-$ docker run -e SWAP=1 -m 4MB rabbitmq
+$ docker run -e SWAP=1 -m 50MB rabbitmq
 
               RabbitMQ 3.6.0. Copyright (C) 2007-2015 Pivotal Software, Inc.
   ##  ##      Licensed under the MPL.  See http://www.rabbitmq.com/

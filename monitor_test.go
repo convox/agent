@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/convox/agent/Godeps/_workspace/src/github.com/convox/rack/api/awsutil"
-	"github.com/convox/agent/Godeps/_workspace/src/github.com/docker/docker/daemon/logger"
-	"github.com/convox/agent/Godeps/_workspace/src/github.com/stretchr/testify/assert"
+	"github.com/convox/rack/api/awsutil"
+	"github.com/docker/docker/daemon/logger"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewMonitor(t *testing.T) {
