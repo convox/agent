@@ -153,30 +153,30 @@ func (m *Monitor) handleDie(id string) {
 	// It seems like explicitly doing a `docker run --rm` is the best way
 	// to state this intent.
 
-	msg := fmt.Sprintf("Dead process %s", id[0:12])
+	msg := fmt.Sprintf("Docker event for process %s - die", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Dead %s process %s", p, id[0:12])
+		msg = fmt.Sprintf("Docker event for %s process %s - die", p, id[0:12])
 	}
 
 	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleKill(id string) {
-	msg := fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12])
+	msg := fmt.Sprintf("Docker event for process %s - kill", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s via SIGKILL", p, id[0:12])
+		msg = fmt.Sprintf("Docker event for %s process %s - kill", p, id[0:12])
 	}
 
 	m.logAppEvent(id, msg)
 }
 
 func (m *Monitor) handleOom(id string) {
-	msg := fmt.Sprintf("Stopped process %s due to OOM", id[0:12])
+	msg := fmt.Sprintf("Docker event for process %s - oom", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s due to OOM", p, id[0:12])
+		msg = fmt.Sprintf("Docker event for %s process %s - oom", p, id[0:12])
 	}
 
 	m.logAppEvent(id, msg)
@@ -191,10 +191,10 @@ func (m *Monitor) handleStart(id string) {
 }
 
 func (m *Monitor) handleStop(id string) {
-	msg := fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12])
+	msg := fmt.Sprintf("Docker event for process %s - stop", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s via SIGTERM", p, id[0:12])
+		msg = fmt.Sprintf("Docker event for %s process %s - stop", p, id[0:12])
 	}
 
 	m.logAppEvent(id, msg)
