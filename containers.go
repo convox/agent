@@ -28,6 +28,13 @@ func (m *Monitor) Containers() {
 	go m.handleEvents(ch)
 	go m.streamLogs()
 
+	// HACK: Range over instrumentation messages channel added to awslogs package
+	go func() {
+		for msg := range awslogs.ConvoxSystemMessages {
+			m.logSystemf(msg)
+		}
+	}()
+
 	m.client.AddEventListener(ch)
 }
 
