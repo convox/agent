@@ -114,26 +114,35 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 		}
 
 		metric := "DockerEvent" + ucfirst(event.Status)
-		msg := fmt.Sprintf("id=%s time=%d count#%s=1", event.ID, event.Time, metric)
+		msg := fmt.Sprintf("container handleEvents id=%s time=%d count#%s=1", event.ID, event.Time, metric)
 
 		if env, ok := m.envs[event.ID]; ok {
 			if p := env["PROCESS"]; p != "" {
-				msg = fmt.Sprintf("id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
+				msg = fmt.Sprintf("container handleEvents id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
 			}
 		}
 
-		m.logSystemMetric("container handleEvents", msg, true)
+		m.logSystemf(msg)
 	}
 }
 
-// Inspect created or existing container
-// Extract env and create awslogger, and save on monitor struct
+// handleCreate inspects a created or existing container
+// It extracts env, and creates an awslogger that will be used later
 func (m *Monitor) handleCreate(id string) {
-	container, env, err := m.inspectContainer(id)
+	env := map[string]string{}
 
+	container, err := m.client.InspectContainer(id)
 	if err != nil {
-		m.logSystemMetric("container handleCreate at=error", fmt.Sprintf("count#DockerInspectError=1 err=%q", err), true)
+		m.logSystemf("container handleCreate client.inspectContainer count#DockerInspectError=1 err=%q", err)
 		return
+	}
+
+	for _, e := range container.Config.Env {
+		parts := strings.SplitN(e, "=", 2)
+
+		if len(parts) == 2 {
+			env[parts[0]] = parts[1]
+		}
 	}
 
 	m.envs[id] = env
@@ -141,11 +150,10 @@ func (m *Monitor) handleCreate(id string) {
 	// create a an awslogger and associated CloudWatch Logs LogGroup
 	if env["LOG_GROUP"] != "" {
 		awslogger, aerr := m.StartAWSLogger(container, env["LOG_GROUP"])
-
 		if aerr != nil {
-			m.logSystemMetric("container StartAWSLogger at=error", fmt.Sprintf("id=%s logGroup=%s process=%s err=%q", id, env["LOG_GROUP"], env["PROCESS"], aerr), true)
+			m.logSystemf("container handleCreate StartAWSLogger logGroup=%s process=%s err=%q", env["LOG_GROUP"], env["PROCESS"], err)
 		} else {
-			m.logSystemMetric("container StartAWSLogger at=ok", fmt.Sprintf("id=%s logGroup=%s process=%s", id, env["LOG_GROUP"], env["PROCESS"]), true)
+			m.logSystemf("container handleCreate StartAWSLogger logGroup=%s process=%s", env["LOG_GROUP"], env["PROCESS"])
 			m.loggers[id] = awslogger
 		}
 	}
@@ -209,27 +217,6 @@ func (m *Monitor) handleStop(id string) {
 	}
 
 	m.logAppEvent(id, msg)
-}
-
-func (m *Monitor) inspectContainer(id string) (*docker.Container, map[string]string, error) {
-	env := map[string]string{}
-
-	container, err := m.client.InspectContainer(id)
-
-	if err != nil {
-		log.Printf("error: %s\n", err)
-		return container, env, err
-	}
-
-	for _, e := range container.Config.Env {
-		parts := strings.SplitN(e, "=", 2)
-
-		if len(parts) == 2 {
-			env[parts[0]] = parts[1]
-		}
-	}
-
-	return container, env, nil
 }
 
 // Modify the container cgroup to enable swap if SWAP=1 is set
@@ -477,9 +464,8 @@ func (m *Monitor) streamLogs() {
 			}
 
 			res, err := Kinesis.PutRecords(records)
-
 			if err != nil {
-				m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#KinesisPutRecordsError=1 err=%q", stream, err), false)
+				m.logSystemf("container streamLogs stream=%s count#KinesisPutRecordsError=1 err=%q", stream, err)
 			}
 
 			errorCount := 0
@@ -492,7 +478,7 @@ func (m *Monitor) streamLogs() {
 				}
 			}
 
-			m.logSystemMetric("container streamLogs", fmt.Sprintf("stream=%s count#KinesisRecordsSuccesses=%d count#KinesisRecordsErrors=%d err=%q", stream, len(res.Records), errorCount, errorMsg), false)
+			m.logSystemf("container streamLogs stream=%s count#KinesisRecordsSuccesses=%d count#KinesisRecordsErrors=%d err=%q", stream, len(res.Records), errorCount, errorMsg)
 		}
 	}
 }
