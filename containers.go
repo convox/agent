@@ -397,6 +397,7 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 		}
 	}
 
+	// count all lines we got from Docker
 	m.logSystemf("container subscribeLogs parseAndForwardLine id=%s dim#app=%s count#Lines=1", id, app)
 
 	// append syslog-ish prefix:
@@ -404,11 +405,14 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 	l := fmt.Sprintf("%s:%s/%s %s", process, release, id[0:12], line)
 
 	if awslogger, ok := m.loggers[id]; ok {
-		awslogger.Log(&logger.Message{
+		err := awslogger.Log(&logger.Message{
 			ContainerID: id,
 			Line:        []byte(l),
 			Timestamp:   ts,
 		})
+		if err != nil {
+			m.logSystemf("container subscribeLogs awslogger.Log err=%q", err)
+		}
 	}
 
 	if k := env["KINESIS"]; k != "" {
@@ -434,8 +438,8 @@ func (m *Monitor) StartAWSLogger(container *docker.Container, logGroup string) (
 	}
 
 	logger, err := awslogs.New(ctx)
-
 	if err != nil {
+		m.logSystemf("container StartAWSLogger err=%q", err)
 		return logger, err
 	}
 
