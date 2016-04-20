@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -44,24 +43,21 @@ type Monitor struct {
 }
 
 func NewMonitor() *Monitor {
-	fmt.Printf("monitor new region=%s kinesis=%s log_group=%s\n", os.Getenv("AWS_REGION"), os.Getenv("KINESIS"), os.Getenv("LOG_GROUP"))
+	fmt.Printf("NewMonitor at=start client_id=%s region=%s kinesis=%s log_group=%s\n", os.Getenv("CLIENT_ID"), os.Getenv("AWS_REGION"), os.Getenv("KINESIS"), os.Getenv("LOG_GROUP"))
 
 	client, err := docker.NewClient(os.Getenv("DOCKER_HOST"))
-
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("NewMonitor docker.NewClient endpoint=%s err=%q\n", os.Getenv("DOCKER_HOST"), err)
 	}
 
 	info, err := client.Info()
-
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err)
+		fmt.Printf("NewMonitor client.Info err=%q\n", err)
 	}
 
 	img, err := GetECSAgentImage(client)
-
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err)
+		fmt.Printf("NewMonitor GetECSAgentImage err=%q\n", err)
 	}
 
 	m := &Monitor{
@@ -104,12 +100,10 @@ func NewMonitor() *Monitor {
 		m.region, _ = svc.Region()
 	}
 
-	message := fmt.Sprintf("az=%s instanceId=%s instanceType=%s region=%s agentImage=%s amiId=%s dockerServerVersion=%s ecsAgentImage=%s kernelVersion=%s",
+	fmt.Printf("NewMonitor az=%s instanceId=%s instanceType=%s region=%s agentImage=%s amiId=%s dockerServerVersion=%s ecsAgentImage=%s kernelVersion=%s\n",
 		m.az, m.instanceId, m.instanceType, m.region,
 		m.agentImage, m.amiId, m.dockerServerVersion, m.ecsAgentImage, m.kernelVersion,
 	)
-
-	m.logSystemMetric("monitor at=new", message, true)
 
 	return m
 }
@@ -133,6 +127,24 @@ func (m *Monitor) logAppEvent(id, message string) {
 
 	if stream, ok := m.envs[id]["KINESIS"]; ok {
 		m.addLine(stream, []byte(fmt.Sprintf("%s %s", ts.Format("2006-01-02 15:04:05"), msg))) // add timestamp to kinesis for legacy purposes
+	}
+}
+
+// logSystem write event to stdout and convox CloudWatch Log Group, prefixed with an instance id
+func (m *Monitor) logSystemf(format string, a ...interface{}) {
+	line := fmt.Sprintf(format, a...)
+	l := fmt.Sprintf("agent:%s/%s %s", m.agentVersion, m.instanceId, line)
+
+	fmt.Println(l)
+
+	id := m.agentId
+
+	if awslogger, ok := m.loggers[id]; ok {
+		awslogger.Log(&logger.Message{
+			ContainerID: id,
+			Line:        []byte(l),
+			Timestamp:   time.Now(),
+		})
 	}
 }
 
@@ -181,9 +193,8 @@ func GetECSAgentImage(client *docker.Client) (string, error) {
 }
 
 func (m *Monitor) ReportError(err error) {
-	m.logSystemMetric("monitor at=error", fmt.Sprintf("err=%q", err), true)
+	m.logSystemf("monitor ReportError err=%q", err)
 
-	rollbar.Token = "f67f25b8a9024d5690f997bd86bf14b0"
 	rollbar.Token = "366f5bdd094f42a0be6259af715354f2"
 
 	extraData := map[string]string{
