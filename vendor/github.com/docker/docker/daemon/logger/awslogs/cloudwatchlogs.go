@@ -57,7 +57,7 @@ type logStream struct {
 
 /// CONVOX HACK!
 
-var ConvoxSystemMessages = make(chan string, 10)
+var ConvoxSystemMessages = make(chan string, 100)
 
 // logSystemf is used to instrument this library
 // It facilitates putting additional info on agent stdout and the Rack CloudWatch LogGroup
