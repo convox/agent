@@ -285,10 +285,10 @@ func (m *Monitor) subscribeLogs(id string) {
 				continue
 			}
 
-		// // Container is missing. Report exception and stop
-		// case docker.NoSuchContainer:
-		// 	m.ReportError(err)
-		// 	break
+		// Container is missing. Report exception and stop
+		case *docker.NoSuchContainer:
+			m.ReportError(err)
+			break
 
 		// Container state is indeterminate. Report exception and retry
 		default:
