@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -18,6 +19,8 @@ import (
 )
 
 func (m *Monitor) Containers() {
+	fmt.Printf("container at=start\n")
+
 	m.handleRunning()
 	m.handleExited()
 
@@ -31,6 +34,8 @@ func (m *Monitor) Containers() {
 
 // List already running containers and subscribe and stream logs
 func (m *Monitor) handleRunning() {
+	fmt.Printf("container handleRunning at=start\n")
+
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{})
 
 	if err != nil {
@@ -53,13 +58,17 @@ func (m *Monitor) handleRunning() {
 			}
 		}
 
-		fmt.Printf("monitor event id=%s status=started\n", shortId)
+		fmt.Printf("container handleRunning id=%s\n", shortId)
 		m.handleCreate(container.ID)
 	}
+
+	fmt.Printf("container handleRunning at=end\n")
 }
 
 // List already exiteded containers and remove
 func (m *Monitor) handleExited() {
+	fmt.Printf("container handleExited at=start\n")
+
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{
 		Filters: map[string][]string{
 			"status": []string{"exited"},
@@ -73,9 +82,11 @@ func (m *Monitor) handleExited() {
 	for _, container := range containers {
 		shortId := container.ID[0:12]
 
-		fmt.Printf("monitor event id=%s status=died\n", shortId)
+		fmt.Printf("container handleExited id=%s\n", shortId)
 		m.handleDie(container.ID)
 	}
+
+	fmt.Printf("container handleExited at=exit\n")
 }
 
 func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
@@ -89,17 +100,17 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 
 		switch event.Status {
 		case "create":
-			m.handleCreate(event.ID)
+			go m.handleCreate(event.ID)
 		case "die":
-			m.handleDie(event.ID)
+			go m.handleDie(event.ID)
 		case "kill":
-			m.handleKill(event.ID)
+			go m.handleKill(event.ID)
 		case "oom":
-			m.handleOom(event.ID)
+			go m.handleOom(event.ID)
 		case "start":
-			m.handleStart(event.ID)
+			go m.handleStart(event.ID)
 		case "stop":
-			m.handleStop(event.ID)
+			go m.handleStop(event.ID)
 		}
 
 		metric := "DockerEvent" + ucfirst(event.Status)
@@ -186,7 +197,7 @@ func (m *Monitor) handleStart(id string) {
 	m.updateCgroups(id)
 
 	if id != m.agentId {
-		go m.subscribeLogs(id)
+		m.subscribeLogs(id)
 	}
 }
 
@@ -258,130 +269,161 @@ func (m *Monitor) updateCgroups(id string) {
 }
 
 func (m *Monitor) subscribeLogs(id string) {
+	fmt.Printf("container subscribeLogs id=%s at=start\n", id)
+
+	for {
+		wg := new(sync.WaitGroup)
+		wg.Add(2)
+
+		exit := make(chan bool)
+		r, w := io.Pipe()
+
+		go m.readLines(id, r, wg, exit)
+		go m.followDockerLogs(id, w, wg, exit)
+
+		wg.Wait()
+
+		// If Docker indicates the container is no longer running, stop following logs
+		// Otherwise retry optimistically in attempt to maximize log delivery
+		c, err := m.client.InspectContainer(id)
+		switch err := err.(type) {
+
+		// Container state is available
+		case nil:
+			if !c.State.Running {
+				break
+			} else {
+				// container is still running, record metric and retry getting logs
+				fmt.Printf("container subscribeLogs id=%s count#DockerLogsRetry=1", id)
+				continue
+			}
+
+		// // Container is missing. Report exception and stop
+		// case docker.NoSuchContainer:
+		// 	m.ReportError(err)
+		// 	break
+
+		// Container state is indeterminate. Report exception and retry
+		default:
+			fmt.Printf("container subscribeLogs id=%s err=%q count#DockerInspectError=1 count#DockerLogsRetry=1\n", id, err)
+			m.ReportError(err)
+			continue
+		}
+	}
+
+	fmt.Printf("container subscribeLogs id=%s\n at=end", id)
+}
+
+func (m *Monitor) readLines(id string, r *io.PipeReader, wg *sync.WaitGroup, exit chan bool) {
+	fmt.Printf("container subscribeLogs readLines id=%s at=start\n", id)
+
+	defer wg.Done()
+
+	br := bufio.NewReader(r)
+
+	for {
+		select {
+		case <-exit:
+			fmt.Printf("container subscribeLogs readLines id=%s at=end exit=true\n", id)
+			return
+		default:
+			line, err := br.ReadString('\n')
+			if err != nil && err != io.EOF {
+				fmt.Printf("container subscribeLogs readLines id=%s at=end err=%q\n", id, err)
+				return
+			} else if line != "" {
+				m.parseAndForwardLine(id, line)
+			}
+		}
+	}
+}
+
+func (m *Monitor) followDockerLogs(id string, w *io.PipeWriter, wg *sync.WaitGroup, exit chan bool) {
+	fmt.Printf("container subscribeLogs followDockerLogs id=%s at=start\n", id)
+
+	defer wg.Done()
+
+	err := m.client.Logs(docker.LogsOptions{
+		Since:        time.Now().Unix(),
+		Container:    id,
+		Follow:       true,
+		Stdout:       true,
+		Stderr:       true,
+		Tail:         "all",
+		Timestamps:   true,
+		RawTerminal:  false,
+		OutputStream: w,
+		ErrorStream:  w,
+	})
+
+	if err != nil {
+		fmt.Printf("container subscribeLogs followDockerLogs id=%s count#DockerLogsError=1\n", id)
+	}
+
+	close(exit)
+
+	fmt.Printf("container subscribeLogs followDockerLogs id=%s at=end\n", id)
+}
+
+func (m *Monitor) parseAndForwardLine(id, line string) {
+	line = line[0 : len(line)-1] // trim off trailing newline from ReadString
+
+	// split and parse docker timestamp
+	ts := time.Now()
+
+	parts := strings.SplitN(line, " ", 2)
+	if len(parts) == 2 {
+		t, err := time.Parse(time.RFC3339Nano, parts[0])
+		if err != nil {
+			fmt.Printf("container subscribeLogs parseAndForwardLine time.Parse err=%q\n", err)
+		} else {
+			ts = t
+			line = parts[1]
+		}
+	}
+
 	env := m.envs[id]
 
+	app := env["APP"]
 	kinesis := env["KINESIS"]
 	logGroup := env["LOG_GROUP"]
 	process := env["PROCESS"]
 	release := env["RELEASE"]
 
-	logResource := kinesis
-	if logResource == "" {
-		logResource = logGroup
-	}
-
-	if logResource == "" {
-		m.logSystemMetric("container subscribeLogs at=skip", fmt.Sprintf("id=%s kinesis=%s logGroup=%s process=%s", id, kinesis, logGroup, process), true)
-		return
-	}
-
-	m.logSystemMetric("container subscribeLogs at=start", fmt.Sprintf("id=%s kinesis=%s logGroup=%s process=%s", id, kinesis, logGroup, process), true)
-
-	r, w := io.Pipe()
-
-	go func(prefix string, r io.ReadCloser) {
-		defer r.Close()
-
-		m.logSystemMetric("container subscribeLogs.Scan at=start", fmt.Sprintf("prefix=%s", prefix), true)
-
-		scanner := bufio.NewScanner(r)
-
-		for scanner.Scan() {
-			text := scanner.Text()
-			// The expectation is a single log line from the Docker daemon:
-			// 2016-04-14T23:29:35.995734263Z Hello from Docker.
-
-			// split and parse docker timestamp
-			ts := time.Now()
-
-			parts := strings.SplitN(text, " ", 2)
-			if len(parts) == 2 {
-				t, err := time.Parse(time.RFC3339Nano, parts[0])
-				if err != nil {
-					fmt.Printf("container subscribeLogs.Scan time.Parse err=%q\n", err)
-				} else {
-					ts = t
-					text = parts[1]
-				}
-			}
-
-			// append syslog-ish prefix:
-			// web:RXZMCQEPDKO/1d11a78279e0 Hello from Docker.
-			line := fmt.Sprintf("%s:%s/%s %s", process, release, id[0:12], text)
-
-			if kinesis != "" {
-				m.addLine(kinesis, []byte(fmt.Sprintf("%s %s", ts.Format("2006-01-02 15:04:05"), line))) // add timestamp to kinesis for legacy purposes
-			}
-
-			if awslogger, ok := m.loggers[id]; ok {
-				awslogger.Log(&logger.Message{
-					ContainerID: id,
-					Line:        []byte(line),
-					Timestamp:   ts,
-				})
-			}
+	// if APP is not available for legacy reasons, fall back to inferring from LOG_GROUP or KINESIS
+	if app == "" {
+		logResource := logGroup
+		if logGroup == "" {
+			logResource = kinesis
 		}
 
-		if scanner.Err() != nil {
-			m.logSystemMetric("container subscribeLogs.Scan at=error", fmt.Sprintf("count#ScannerError=1 err=%q", scanner.Err().Error()), true)
-		}
-
-		m.logSystemMetric("container subscribeLogs.Scan at=return", fmt.Sprintf("prefix=%s", prefix), true)
-	}(process, r)
-
-	// tail docker logs and write to pipe
-	// start close to Now() so agent restarts dont replay too many logs
-	since := time.Now().Add(-15 * time.Second).Unix()
-
-	for {
-		m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s since=%d", id, since), true)
-
-		err := m.client.Logs(docker.LogsOptions{
-			Since:        since,
-			Container:    id,
-			Follow:       true,
-			Stdout:       true,
-			Stderr:       true,
-			Tail:         "all",
-			Timestamps:   true,
-			RawTerminal:  false,
-			OutputStream: w,
-			ErrorStream:  w,
-		})
-
-		since = time.Now().Unix() // update cursor to now in anticipation of retry
-
-		if err != nil {
-			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#DockerLogsError=1 err=%q", id, err), true)
-		}
-
-		container, err := m.client.InspectContainer(id)
-
-		if err != nil {
-			m.logSystemMetric("container subscribeLogs", fmt.Sprintf("id=%s count#DockerInspectContainerError=1 err=%q", id, err), true)
-			break
-		}
-
-		if container.State.Running == false {
-			break
+		// extract app name from log resource
+		// convox-httpd-LogGroup-1KIJO8SS9F3Q9 -> convox-httpd
+		// myapp-staging-Kinesis-L6MUKT1VH451 -> myapp-staging
+		parts := strings.Split(logResource, "-")
+		if len(parts) > 2 {
+			app = strings.Join(parts[0:len(parts)-2], "-") // drop -LogGroup-YXXX
 		}
 	}
 
-	w.Close()
+	fmt.Printf("container subscribeLogs parseAndForwardLine dim#app=%s count#Lines=1\n", app)
+
+	// append syslog-ish prefix:
+	// web:RXZMCQEPDKO/1d11a78279e0 Hello from Docker.
+	l := fmt.Sprintf("%s:%s/%s %s", process, release, id[0:12], line)
 
 	if awslogger, ok := m.loggers[id]; ok {
-		err := awslogger.Close()
-
-		if err != nil {
-			m.logSystemMetric("container awslogger.Close at=error", fmt.Sprintf("id=%s logGroup=%s process=%s err=%q", id, logGroup, process, err), true)
-		} else {
-			m.logSystemMetric("container awslogger.Close at=ok", fmt.Sprintf("id=%s logGroup=%s process=%s", id, logGroup, process), true)
-		}
-
-		delete(m.loggers, id)
+		awslogger.Log(&logger.Message{
+			ContainerID: id,
+			Line:        []byte(l),
+			Timestamp:   ts,
+		})
 	}
 
-	m.logSystemMetric("container subscribeLogs at=return", fmt.Sprintf("id=%s kinesis=%s logGroup=%s process=%s", id, kinesis, logGroup, process), true)
+	if k := env["KINESIS"]; k != "" {
+		// add timestamp to kinesis for legacy purposes
+		m.addLine(k, []byte(fmt.Sprintf("%s %s", ts.Format("2006-01-02 15:04:05"), l)))
+	}
 }
 
 func (m *Monitor) StartAWSLogger(container *docker.Container, logGroup string) (logger.Logger, error) {
@@ -421,20 +463,6 @@ func (m *Monitor) streamLogs() {
 			if l == nil {
 				continue
 			}
-
-			// emit telemetry about how many lines total we've seen from the Docker API
-			// These metrics can be compared to CloudWatch IncomingLogEvents and IncomingRecords
-			// to understand log delivery rate.
-
-			// extract app name from kinesis
-			// myapp-staging-Kinesis-L6MUKT1VH451 -> myapp-staging
-			app := stream
-			parts := strings.Split(stream, "-")
-			if len(parts) > 2 {
-				app = strings.Join(parts[0:len(parts)-2], "-") // drop -Kinesis-YXXX
-			}
-
-			m.logSystemMetric("container streamLogs", fmt.Sprintf("dim#app=%s count#Lines=%d", app, len(l)), false)
 
 			records := &kinesis.PutRecordsInput{
 				Records:    make([]*kinesis.PutRecordsRequestEntry, len(l)),
