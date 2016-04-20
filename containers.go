@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +18,7 @@ import (
 )
 
 func (m *Monitor) Containers() {
-	fmt.Printf("container at=start\n")
+	m.logSystemf("container at=start")
 
 	m.handleRunning()
 	m.handleExited()
@@ -34,7 +33,7 @@ func (m *Monitor) Containers() {
 
 // List already running containers and subscribe and stream logs
 func (m *Monitor) handleRunning() {
-	fmt.Printf("container handleRunning at=start\n")
+	m.logSystemf("container handleRunning at=start")
 
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{})
 
@@ -43,8 +42,6 @@ func (m *Monitor) handleRunning() {
 	}
 
 	for _, container := range containers {
-		shortId := container.ID[0:12]
-
 		// Don't subscribe and stream logs from the agent container itself
 		img := container.Image
 
@@ -58,16 +55,16 @@ func (m *Monitor) handleRunning() {
 			}
 		}
 
-		fmt.Printf("container handleRunning id=%s\n", shortId)
+		m.logSystemf("container handleRunning id=%s", container.ID)
 		m.handleCreate(container.ID)
 	}
 
-	fmt.Printf("container handleRunning at=end\n")
+	m.logSystemf("container handleRunning at=end")
 }
 
 // List already exiteded containers and remove
 func (m *Monitor) handleExited() {
-	fmt.Printf("container handleExited at=start\n")
+	m.logSystemf("container handleExited at=start")
 
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{
 		Filters: map[string][]string{
@@ -80,20 +77,18 @@ func (m *Monitor) handleExited() {
 	}
 
 	for _, container := range containers {
-		shortId := container.ID[0:12]
-
-		fmt.Printf("container handleExited id=%s\n", shortId)
+		m.logSystemf("container handleExited id=%s", container.ID)
 		m.handleDie(container.ID)
 	}
 
-	fmt.Printf("container handleExited at=exit\n")
+	m.logSystemf("container handleExited at=end")
 }
 
 func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
+	m.logSystemf("container handleEvents at=start")
+
 	for event := range ch {
-
 		shortId := event.ID
-
 		if len(shortId) > 12 {
 			shortId = shortId[0:12]
 		}
@@ -129,11 +124,13 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 // handleCreate inspects a created or existing container
 // It extracts env, and creates an awslogger that will be used later
 func (m *Monitor) handleCreate(id string) {
+	m.logSystemf("container handleCreate at=start id=%s", id)
+
 	env := map[string]string{}
 
 	container, err := m.client.InspectContainer(id)
 	if err != nil {
-		m.logSystemf("container handleCreate client.inspectContainer count#DockerInspectError=1 err=%q", err)
+		m.logSystemf("container handleCreate id=%s client.inspectContainer count#DockerInspectError=1 err=%q", id, err)
 		return
 	}
 
@@ -159,7 +156,6 @@ func (m *Monitor) handleCreate(id string) {
 	}
 
 	msg := fmt.Sprintf("Starting process %s", id[0:12])
-
 	if p := env["PROCESS"]; p != "" {
 		msg = fmt.Sprintf("Starting %s process %s", p, id[0:12])
 	}
@@ -168,6 +164,8 @@ func (m *Monitor) handleCreate(id string) {
 }
 
 func (m *Monitor) handleDie(id string) {
+	m.logSystemf("container handleDie at=start id=%s", id)
+
 	// While we could remove a container and volumes on this event
 	// It seems like explicitly doing a `docker run --rm` is the best way
 	// to state this intent.
@@ -182,6 +180,8 @@ func (m *Monitor) handleDie(id string) {
 }
 
 func (m *Monitor) handleKill(id string) {
+	m.logSystemf("container handleKill at=start id=%s", id)
+
 	msg := fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
@@ -192,6 +192,8 @@ func (m *Monitor) handleKill(id string) {
 }
 
 func (m *Monitor) handleOom(id string) {
+	m.logSystemf("container handleOom at=start id=%s", id)
+
 	msg := fmt.Sprintf("Stopped process %s due to OOM", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
@@ -202,14 +204,20 @@ func (m *Monitor) handleOom(id string) {
 }
 
 func (m *Monitor) handleStart(id string) {
+	m.logSystemf("container handleStart at=start id=%s", id)
+
 	m.updateCgroups(id)
 
 	if id != m.agentId {
 		m.subscribeLogs(id)
 	}
+
+	m.logSystemf("container handleStart at=end id=%s", id)
 }
 
 func (m *Monitor) handleStop(id string) {
+	m.logSystemf("container handleStop at=start id=%s", id)
+
 	msg := fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12])
 
 	if p := m.envs[id]["PROCESS"]; p != "" {
@@ -224,39 +232,36 @@ func (m *Monitor) updateCgroups(id string) {
 	env := m.envs[id]
 
 	if env["SWAP"] == "1" {
+		m.logSystemf("container updateCgroups at=start id=%s", id)
+
 		// sleep to address observed race for cgroups setup
 		// error: open /cgroup/memory/docker/6a3ea224a5e26657207f6c3d3efad072e3a5b02ec3e80a5a064909d9f882e402/memory.memsw.limit_in_bytes: no such file or directory
 		time.Sleep(1 * time.Second)
 
-		shortId := id[0:12]
-
 		bytes := "18446744073709551615"
 
-		fmt.Printf("monitor cgroups id=%s cgroup=memory.memsw.limit_in_bytes value=%s\n", shortId, bytes)
 		err := ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.memsw.limit_in_bytes", id), []byte(bytes), 0644)
-
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			m.logSystemf("container updateCgroups id=%s cgroup=memory.memsw.limit_in_bytes value=%s err=%q", id, bytes, err)
+			m.ReportError(err)
 		}
 
-		fmt.Printf("monitor cgroups id=%s cgroup=memory.soft_limit_in_bytes value=%s\n", shortId, bytes)
 		err = ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.soft_limit_in_bytes", id), []byte(bytes), 0644)
-
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			m.logSystemf("container updateCgroups id=%s cgroup=memory.soft_limit_in_bytes value=%s err=%q", id, bytes, err)
+			m.ReportError(err)
 		}
 
-		fmt.Printf("monitor cgroups id=%s cgroup=memory.limit_in_bytes value=%s\n", shortId, bytes)
 		err = ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.limit_in_bytes", id), []byte(bytes), 0644)
-
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			m.logSystemf("container updateCgroups id=%s cgroup=memory.limit_in_bytes value=%s err=%q", id, bytes, err)
+			m.ReportError(err)
 		}
 	}
 }
 
 func (m *Monitor) subscribeLogs(id string) {
-	fmt.Printf("container subscribeLogs id=%s at=start\n", id)
+	m.logSystemf("container subscribeLogs id=%s at=start", id)
 
 	for {
 		wg := new(sync.WaitGroup)
@@ -281,7 +286,7 @@ func (m *Monitor) subscribeLogs(id string) {
 				break
 			} else {
 				// container is still running, record metric and retry getting logs
-				fmt.Printf("container subscribeLogs id=%s count#DockerLogsRetry=1", id)
+				m.logSystemf("container subscribeLogs id=%s count#DockerLogsRetry=1", id)
 				continue
 			}
 
@@ -292,17 +297,17 @@ func (m *Monitor) subscribeLogs(id string) {
 
 		// Container state is indeterminate. Report exception and retry
 		default:
-			fmt.Printf("container subscribeLogs id=%s err=%q count#DockerInspectError=1 count#DockerLogsRetry=1\n", id, err)
+			m.logSystemf("container subscribeLogs id=%s err=%q count#DockerInspectError=1 count#DockerLogsRetry=1", id, err)
 			m.ReportError(err)
 			continue
 		}
 	}
 
-	fmt.Printf("container subscribeLogs id=%s\n at=end", id)
+	m.logSystemf("container subscribeLogs id=%s at=end", id)
 }
 
 func (m *Monitor) readLines(id string, r *io.PipeReader, wg *sync.WaitGroup, exit chan bool) {
-	fmt.Printf("container subscribeLogs readLines id=%s at=start\n", id)
+	m.logSystemf("container subscribeLogs readLines id=%s at=start", id)
 
 	defer wg.Done()
 
@@ -311,12 +316,12 @@ func (m *Monitor) readLines(id string, r *io.PipeReader, wg *sync.WaitGroup, exi
 	for {
 		select {
 		case <-exit:
-			fmt.Printf("container subscribeLogs readLines id=%s at=end exit=true\n", id)
+			m.logSystemf("container subscribeLogs readLines id=%s at=end exit=true", id)
 			return
 		default:
 			line, err := br.ReadString('\n')
 			if err != nil && err != io.EOF {
-				fmt.Printf("container subscribeLogs readLines id=%s at=end err=%q\n", id, err)
+				m.logSystemf("container subscribeLogs readLines id=%s at=end err=%q", id, err)
 				return
 			} else if line != "" {
 				m.parseAndForwardLine(id, line)
@@ -326,7 +331,7 @@ func (m *Monitor) readLines(id string, r *io.PipeReader, wg *sync.WaitGroup, exi
 }
 
 func (m *Monitor) followDockerLogs(id string, w *io.PipeWriter, wg *sync.WaitGroup, exit chan bool) {
-	fmt.Printf("container subscribeLogs followDockerLogs id=%s at=start\n", id)
+	m.logSystemf("container subscribeLogs followDockerLogs id=%s at=start", id)
 
 	defer wg.Done()
 
@@ -342,14 +347,13 @@ func (m *Monitor) followDockerLogs(id string, w *io.PipeWriter, wg *sync.WaitGro
 		OutputStream: w,
 		ErrorStream:  w,
 	})
-
 	if err != nil {
-		fmt.Printf("container subscribeLogs followDockerLogs id=%s count#DockerLogsError=1\n", id)
+		m.logSystemf("container subscribeLogs followDockerLogs id=%s count#DockerLogsError=1", id)
 	}
 
 	close(exit)
 
-	fmt.Printf("container subscribeLogs followDockerLogs id=%s at=end\n", id)
+	m.logSystemf("container subscribeLogs followDockerLogs id=%s at=end", id)
 }
 
 func (m *Monitor) parseAndForwardLine(id, line string) {
@@ -362,7 +366,7 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 	if len(parts) == 2 {
 		t, err := time.Parse(time.RFC3339Nano, parts[0])
 		if err != nil {
-			fmt.Printf("container subscribeLogs parseAndForwardLine time.Parse err=%q\n", err)
+			m.logSystemf("container subscribeLogs parseAndForwardLine time.Parse err=%q", err)
 		} else {
 			ts = t
 			line = parts[1]
@@ -393,7 +397,7 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 		}
 	}
 
-	fmt.Printf("container subscribeLogs parseAndForwardLine dim#app=%s count#Lines=1\n", app)
+	m.logSystemf("container subscribeLogs parseAndForwardLine id=%s dim#app=%s count#Lines=1", id, app)
 
 	// append syslog-ish prefix:
 	// web:RXZMCQEPDKO/1d11a78279e0 Hello from Docker.
