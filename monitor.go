@@ -184,6 +184,7 @@ func (m *Monitor) ReportError(err error) {
 	m.logSystemMetric("monitor at=error", fmt.Sprintf("err=%q", err), true)
 
 	rollbar.Token = "f67f25b8a9024d5690f997bd86bf14b0"
+	rollbar.Token = "366f5bdd094f42a0be6259af715354f2"
 
 	extraData := map[string]string{
 		"agentId":    m.agentId,
