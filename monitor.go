@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -148,28 +150,6 @@ func (m *Monitor) logSystemf(format string, a ...interface{}) {
 	}
 }
 
-// Write event to convox CloudWatch Log Group
-func (m *Monitor) logSystemMetric(prefix, message string, kinesis bool) {
-	message = fmt.Sprintf("%s instanceId=%s %s", prefix, m.instanceId, message)
-
-	fmt.Println(message)
-
-	id := m.agentId
-	msg := fmt.Sprintf("agent:%s/%s %s", m.agentVersion, m.instanceId, message)
-
-	if awslogger, ok := m.loggers[id]; ok {
-		awslogger.Log(&logger.Message{
-			ContainerID: id,
-			Line:        []byte(msg),
-			Timestamp:   time.Now(),
-		})
-	}
-
-	if stream, ok := m.envs[id]["KINESIS"]; kinesis && ok {
-		m.addLine(stream, []byte(msg))
-	}
-}
-
 func GetECSAgentImage(client *docker.Client) (string, error) {
 	containers, err := client.ListContainers(docker.ListContainersOptions{})
 
@@ -218,10 +198,9 @@ func (m *Monitor) ReportError(err error) {
 }
 
 func (m *Monitor) SetUnhealthy(system string, reason error) {
-	prefix := fmt.Sprintf("agent setunhealthy system=%s at=fatal", system)
 	metric := ucfirst(system) + "Error" // DockerError or DmesgError
-
-	m.logSystemMetric(prefix, fmt.Sprintf("count#%s=1 err=%q", metric, reason), true)
+	m.logSystemf("%s ok=false count#%s err=%q", system, metric, reason)
+	m.ReportError(reason)
 
 	AutoScaling := autoscaling.New(&aws.Config{})
 
@@ -230,12 +209,17 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 		InstanceId:               aws.String(m.instanceId),
 		ShouldRespectGracePeriod: aws.Bool(true),
 	})
-
 	if err != nil {
-		m.logSystemMetric(prefix, fmt.Sprintf("count#AutoScaling.SetInstanceHealth.error=1 err=%q", err), true)
+		m.logSystemf("monitor AutoScaling.SetInstanceHealth count#AutoScalingSetInstanceHealthError=1 err=%q", err)
 	}
 
-	m.ReportDmesg()
+	// Dump dmesg to convox log stream and rollbar
+	out, err := exec.Command("dmesg").CombinedOutput()
+	if err != nil {
+		m.ReportError(err)
+	} else {
+		m.ReportError(errors.New(string(out)))
+	}
 }
 
 func ucfirst(s string) string {
