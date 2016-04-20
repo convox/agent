@@ -270,6 +270,7 @@ func (m *Monitor) updateCgroups(id string) {
 func (m *Monitor) subscribeLogs(id string) {
 	m.logSystemf("container subscribeLogs id=%s at=start", id)
 
+retry:
 	for {
 		wg := new(sync.WaitGroup)
 		wg.Add(2)
@@ -290,7 +291,7 @@ func (m *Monitor) subscribeLogs(id string) {
 		// Container state is available
 		case nil:
 			if !c.State.Running {
-				break
+				break retry
 			} else {
 				// container is still running, record metric and retry getting logs
 				m.logSystemf("container subscribeLogs id=%s count#DockerLogsRetry=1", id)
@@ -300,13 +301,23 @@ func (m *Monitor) subscribeLogs(id string) {
 		// Container is missing. Report exception and stop
 		case *docker.NoSuchContainer:
 			m.ReportError(err)
-			break
+			break retry
 
 		// Container state is indeterminate. Report exception and retry
 		default:
 			m.logSystemf("container subscribeLogs id=%s err=%q count#DockerInspectError=1 count#DockerLogsRetry=1", id, err)
 			m.ReportError(err)
 			continue
+		}
+	}
+
+	if awslogger, ok := m.loggers[id]; ok {
+		err := awslogger.Close()
+		if err != nil {
+			m.logSystemf("container subscribeLogs id=%s awslogger.Close err=%q", id, err)
+			m.ReportError(err)
+		} else {
+			m.logSystemf("container subscribeLogs id=%s awslogger.Close", id)
 		}
 	}
 
@@ -356,6 +367,11 @@ func (m *Monitor) followDockerLogs(id string, w *io.PipeWriter, wg *sync.WaitGro
 	})
 	if err != nil {
 		m.logSystemf("container subscribeLogs followDockerLogs id=%s count#DockerLogsError=1", id)
+	}
+
+	err = w.Close()
+	if err != nil {
+		m.logSystemf("container subscribeLogs w.Close id=%s count#DockerLogsError=1", id)
 	}
 
 	close(exit)
