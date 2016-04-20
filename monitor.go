@@ -181,6 +181,8 @@ func (m *Monitor) ReportError(err error) {
 		"agentId":    m.agentId,
 		"agentImage": m.agentImage,
 
+		"clientId": os.Getenv("CLIENT_ID"),
+
 		"amiId":        m.amiId,
 		"az":           m.az,
 		"instanceId":   m.instanceId,
@@ -194,7 +196,7 @@ func (m *Monitor) ReportError(err error) {
 	}
 	extraField := &rollbar.Field{"env", extraData}
 
-	rollbar.Error(rollbar.CRIT, err, extraField)
+	rollbar.ErrorWithStackSkip(rollbar.CRIT, err, 1, extraField)
 }
 
 func (m *Monitor) SetUnhealthy(system string, reason error) {
