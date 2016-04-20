@@ -125,8 +125,9 @@ func TestNewMonitor(t *testing.T) {
 
 			envs: make(map[string]map[string]string),
 
-			agentId:    "unknown",
-			agentImage: "convox/agent:dev",
+			agentId:      "unknown",
+			agentImage:   "convox/agent:dev",
+			agentVersion: "dev",
 
 			amiId:        "ami-cb2305a1",
 			az:           "us-east-1c",
