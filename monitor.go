@@ -175,7 +175,7 @@ func GetECSAgentImage(client *docker.Client) (string, error) {
 func (m *Monitor) ReportError(err error) {
 	m.logSystemf("monitor ReportError err=%q", err)
 
-	rollbar.Token = "366f5bdd094f42a0be6259af715354f2"
+	rollbar.Token = "ca01e8fc13ed4aa893f7a0300d94f2e1"
 
 	extraData := map[string]string{
 		"agentId":    m.agentId,
