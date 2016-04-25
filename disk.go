@@ -14,16 +14,16 @@ import (
 // Currently this only accurrately reports disk usage on the Amazon ECS AMI and the devicemapper driver
 // not Docker Machine, boot2docker and aufs driver
 func (m *Monitor) Disk() {
-	m.logSystemMetric("disk at=start", "", true)
+	m.logSystemf("disk at=start")
 
 	for _ = range time.Tick(MONITOR_INTERVAL) {
 		// Report Docker utilization
 		a, t, u, docker_util, err := m.DockerUtilization()
-
 		if err != nil {
-			m.logSystemMetric("disk at=error", fmt.Sprintf("err=%q", err), true)
+			m.logSystemf("disk DockerUtilization err=%q", err)
+			m.ReportError(err)
 		} else {
-			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=docker dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, docker_util), true)
+			m.logSystemf("disk DockerUtilization dim#volume=docker dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, docker_util)
 		}
 
 		// If disk is over 80.0 full, delete docker containers and images in attempt to reclaim space
@@ -34,11 +34,11 @@ func (m *Monitor) Disk() {
 		// Report root volume utilization after artifacts have possibly been removed
 		path := "/mnt/host_root"
 		a, t, u, root_util, err := m.PathUtilization(path)
-
 		if err != nil {
-			m.logSystemMetric("disk at=error", fmt.Sprintf("path=%s err=%q", path, err), true)
+			m.logSystemf("disk PathUtilization path=%s err=%q", path, err)
+			m.ReportError(err)
 		} else {
-			m.logSystemMetric("disk", fmt.Sprintf("dim#volume=root dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, root_util), true)
+			m.logSystemf("disk PathUtilization dim#volume=root dim#instanceId=%s sample#disk.available=%.4fgB sample#disk.total=%.4fgB sample#disk.used=%.4fgB sample#disk.utilization=%.2f%%", m.instanceId, a, t, u, root_util)
 		}
 
 		// when root disk is very close to full, we expect degraded performance
@@ -51,7 +51,6 @@ func (m *Monitor) Disk() {
 
 func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err error) {
 	info, err := m.client.Info()
-
 	if err != nil {
 		return
 	}
@@ -59,7 +58,6 @@ func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err err
 	status := [][]string{}
 
 	err = info.GetJSON("DriverStatus", &status)
-
 	if err != nil {
 		return
 	}
@@ -69,7 +67,6 @@ func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err err
 	for _, v := range status {
 		if v[0] == "Data Space Available" {
 			a, err = units.FromHumanSize(v[1])
-
 			if err != nil {
 				return
 			}
@@ -77,7 +74,6 @@ func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err err
 
 		if v[0] == "Data Space Total" {
 			t, err = units.FromHumanSize(v[1])
-
 			if err != nil {
 				return
 			}
@@ -85,7 +81,6 @@ func (m *Monitor) DockerUtilization() (avail, total, used, util float64, err err
 
 		if v[0] == "Data Space Used" {
 			u, err = units.FromHumanSize(v[1])
-
 			if err != nil {
 				return
 			}
@@ -109,7 +104,6 @@ func (m *Monitor) PathUtilization(path string) (avail, total, used, util float64
 	// https://github.com/StalkR/goircbot/blob/master/lib/disk/space_unix.go
 	s := syscall.Statfs_t{}
 	err = syscall.Statfs(path, &s)
-
 	if err != nil {
 		return
 	}
@@ -127,11 +121,9 @@ func (m *Monitor) PathUtilization(path string) (avail, total, used, util float64
 
 // Force remove docker containers, volumes and images
 // This is a quick and dirty way to remove everything but running containers their images
-// This will blow away build or run cache but hopefully preserve
-// disk space.
+// This will blow away build or run cache but hopefully preserve disk space.
 func (m *Monitor) RemoveDockerArtifacts() {
-	m.logSystemMetric("disk", "count#docker.rmi=1", true)
-
+	m.logSystemf("disk RemoveDockerArtifacts at=start count#docker.rm=1")
 	m.run(`docker rm -v $(docker ps -a -q)`)
 	m.run(`docker rmi -f $(docker images -a -q)`)
 }
@@ -139,14 +131,13 @@ func (m *Monitor) RemoveDockerArtifacts() {
 // Blindly run a shell command and log its output and error
 func (m *Monitor) run(cmd string) {
 	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
-
-	lines := strings.Split(string(out), "\n")
-
-	for _, l := range lines {
-		m.logSystemMetric("disk run", fmt.Sprintf("cmd=%q out=%q", cmd, l), true)
+	if err != nil {
+		m.logSystemf("disk run err=%q", err)
+		m.ReportError(err)
 	}
 
-	if err != nil {
-		m.logSystemMetric("disk run", fmt.Sprintf("error=%q", err), true)
+	lines := strings.Split(string(out), "\n")
+	for _, l := range lines {
+		m.logSystemf("disk run cmd=%q out=%q", cmd, l)
 	}
 }

@@ -1,9 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -44,24 +45,21 @@ type Monitor struct {
 }
 
 func NewMonitor() *Monitor {
-	fmt.Printf("monitor new region=%s kinesis=%s log_group=%s\n", os.Getenv("AWS_REGION"), os.Getenv("KINESIS"), os.Getenv("LOG_GROUP"))
+	fmt.Printf("NewMonitor at=start client_id=%s region=%s kinesis=%s log_group=%s\n", os.Getenv("CLIENT_ID"), os.Getenv("AWS_REGION"), os.Getenv("KINESIS"), os.Getenv("LOG_GROUP"))
 
 	client, err := docker.NewClient(os.Getenv("DOCKER_HOST"))
-
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("NewMonitor docker.NewClient endpoint=%s err=%q\n", os.Getenv("DOCKER_HOST"), err)
 	}
 
 	info, err := client.Info()
-
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err)
+		fmt.Printf("NewMonitor client.Info err=%q\n", err)
 	}
 
 	img, err := GetECSAgentImage(client)
-
 	if err != nil {
-		fmt.Printf("ERROR: %s\n", err)
+		fmt.Printf("NewMonitor GetECSAgentImage err=%q\n", err)
 	}
 
 	m := &Monitor{
@@ -104,12 +102,10 @@ func NewMonitor() *Monitor {
 		m.region, _ = svc.Region()
 	}
 
-	message := fmt.Sprintf("az=%s instanceId=%s instanceType=%s region=%s agentImage=%s amiId=%s dockerServerVersion=%s ecsAgentImage=%s kernelVersion=%s",
+	fmt.Printf("NewMonitor az=%s instanceId=%s instanceType=%s region=%s agentImage=%s amiId=%s dockerServerVersion=%s ecsAgentImage=%s kernelVersion=%s\n",
 		m.az, m.instanceId, m.instanceType, m.region,
 		m.agentImage, m.amiId, m.dockerServerVersion, m.ecsAgentImage, m.kernelVersion,
 	)
-
-	m.logSystemMetric("monitor at=new", message, true)
 
 	return m
 }
@@ -136,25 +132,21 @@ func (m *Monitor) logAppEvent(id, message string) {
 	}
 }
 
-// Write event to convox CloudWatch Log Group
-func (m *Monitor) logSystemMetric(prefix, message string, kinesis bool) {
-	message = fmt.Sprintf("%s instanceId=%s %s", prefix, m.instanceId, message)
+// logSystem write event to stdout and convox CloudWatch Log Group, prefixed with an instance id
+func (m *Monitor) logSystemf(format string, a ...interface{}) {
+	line := fmt.Sprintf(format, a...)
+	l := fmt.Sprintf("agent:%s/%s %s", m.agentVersion, m.instanceId, line)
 
-	fmt.Println(message)
+	fmt.Println(l)
 
 	id := m.agentId
-	msg := fmt.Sprintf("agent:%s/%s %s", m.agentVersion, m.instanceId, message)
 
 	if awslogger, ok := m.loggers[id]; ok {
 		awslogger.Log(&logger.Message{
 			ContainerID: id,
-			Line:        []byte(msg),
+			Line:        []byte(l),
 			Timestamp:   time.Now(),
 		})
-	}
-
-	if stream, ok := m.envs[id]["KINESIS"]; kinesis && ok {
-		m.addLine(stream, []byte(msg))
 	}
 }
 
@@ -181,13 +173,15 @@ func GetECSAgentImage(client *docker.Client) (string, error) {
 }
 
 func (m *Monitor) ReportError(err error) {
-	m.logSystemMetric("monitor at=error", fmt.Sprintf("err=%q", err), true)
+	m.logSystemf("monitor ReportError err=%q", err)
 
-	rollbar.Token = "f67f25b8a9024d5690f997bd86bf14b0"
+	rollbar.Token = "ca01e8fc13ed4aa893f7a0300d94f2e1"
 
 	extraData := map[string]string{
 		"agentId":    m.agentId,
 		"agentImage": m.agentImage,
+
+		"clientId": os.Getenv("CLIENT_ID"),
 
 		"amiId":        m.amiId,
 		"az":           m.az,
@@ -202,14 +196,13 @@ func (m *Monitor) ReportError(err error) {
 	}
 	extraField := &rollbar.Field{"env", extraData}
 
-	rollbar.Error(rollbar.CRIT, err, extraField)
+	rollbar.ErrorWithStackSkip(rollbar.CRIT, err, 1, extraField)
 }
 
 func (m *Monitor) SetUnhealthy(system string, reason error) {
-	prefix := fmt.Sprintf("agent setunhealthy system=%s at=fatal", system)
 	metric := ucfirst(system) + "Error" // DockerError or DmesgError
-
-	m.logSystemMetric(prefix, fmt.Sprintf("count#%s=1 err=%q", metric, reason), true)
+	m.logSystemf("%s ok=false count#%s err=%q", system, metric, reason)
+	m.ReportError(reason)
 
 	AutoScaling := autoscaling.New(&aws.Config{})
 
@@ -218,12 +211,17 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 		InstanceId:               aws.String(m.instanceId),
 		ShouldRespectGracePeriod: aws.Bool(true),
 	})
-
 	if err != nil {
-		m.logSystemMetric(prefix, fmt.Sprintf("count#AutoScaling.SetInstanceHealth.error=1 err=%q", err), true)
+		m.logSystemf("monitor AutoScaling.SetInstanceHealth count#AutoScalingSetInstanceHealthError=1 err=%q", err)
 	}
 
-	m.ReportDmesg()
+	// Dump dmesg to convox log stream and rollbar
+	out, err := exec.Command("dmesg").CombinedOutput()
+	if err != nil {
+		m.ReportError(err)
+	} else {
+		m.ReportError(errors.New(string(out)))
+	}
 }
 
 func ucfirst(s string) string {

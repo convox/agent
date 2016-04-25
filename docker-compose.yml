@@ -6,11 +6,11 @@ agent:
     - AWS_REGION
     - AWS_ACCESS_KEY_ID
     - AWS_SECRET_ACCESS_KEY
+    - CLIENT_ID=dev@convox.com
     - KINESIS
     - LOG_GROUP
     - DEVELOPMENT=true
   volumes:
-    - /:/mnt/host_root
+    - /tmp:/mnt/host_root
     - /sys/fs/cgroup:/cgroup
     - /var/run/docker.sock:/var/run/docker.sock
-    - .:/go/src/github.com/convox/agent
