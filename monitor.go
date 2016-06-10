@@ -204,6 +204,9 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 	m.logSystemf("%s ok=false count#%s err=%q", system, metric, reason)
 	m.ReportError(reason)
 
+	// log for humans
+	m.logSystemf("what=%q why=%q", system, reason)
+
 	AutoScaling := autoscaling.New(&aws.Config{})
 
 	_, err := AutoScaling.SetInstanceHealth(&autoscaling.SetInstanceHealthInput{
