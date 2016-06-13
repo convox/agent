@@ -204,9 +204,6 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 	m.logSystemf("%s ok=false count#%s err=%q", system, metric, reason)
 	m.ReportError(reason)
 
-	// log for humans
-	m.logSystemf("what=%q why=%q", system, reason)
-
 	AutoScaling := autoscaling.New(&aws.Config{})
 
 	_, err := AutoScaling.SetInstanceHealth(&autoscaling.SetInstanceHealthInput{
@@ -216,6 +213,9 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 	})
 	if err != nil {
 		m.logSystemf("monitor AutoScaling.SetInstanceHealth count#AutoScalingSetInstanceHealthError=1 err=%q", err)
+	} else {
+		// log for humans
+		m.logSystemf("who=\"convox/agent\" what=\"marked instance %s unhealthy\" why=\"%s %s\"", m.instanceId, system, reason)
 	}
 
 	// Dump dmesg to convox log stream and rollbar
