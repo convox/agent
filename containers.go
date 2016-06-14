@@ -421,7 +421,7 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 	}
 
 	// count all lines we got from Docker
-	m.logSystemf("container subscribeLogs parseAndForwardLine id=%s dim#app=%s count#Lines=1", id, app)
+	// m.logSystemf("container subscribeLogs parseAndForwardLine id=%s dim#app=%s count#Lines=1", id, app)
 
 	// append syslog-ish prefix:
 	// web:RXZMCQEPDKO/1d11a78279e0 Hello from Docker.
@@ -509,7 +509,9 @@ func (m *Monitor) streamLogs() {
 				}
 			}
 
-			m.logSystemf("container streamLogs stream=%s count#KinesisRecordsSuccesses=%d count#KinesisRecordsErrors=%d err=%q", stream, len(res.Records), errorCount, errorMsg)
+			if errorCount > 0 {
+				m.logSystemf("container streamLogs stream=%s count#KinesisRecordsSuccesses=%d count#KinesisRecordsErrors=%d err=%q", stream, len(res.Records), errorCount, errorMsg)
+			}
 		}
 	}
 }
