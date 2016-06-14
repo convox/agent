@@ -289,10 +289,10 @@ func (l *logStream) collectBatch() {
 // accounting for sequencing requirements (each request must reference the
 // sequence token returned by the previous request).
 func (l *logStream) publishBatch(events []*cloudwatchlogs.InputLogEvent) {
-	logSystemf("awslogs publishBatch group=%s stream=%s at=start", l.logGroupName, l.logStreamName)
+	// logSystemf("awslogs publishBatch group=%s stream=%s at=start", l.logGroupName, l.logStreamName)
 
 	if len(events) == 0 {
-		logSystemf("awslogs publishBatch group=%s stream=%s at=end len=0", l.logGroupName, l.logStreamName)
+		// logSystemf("awslogs publishBatch group=%s stream=%s at=end len=0", l.logGroupName, l.logStreamName)
 		return
 	}
 
@@ -325,7 +325,7 @@ func (l *logStream) publishBatch(events []*cloudwatchlogs.InputLogEvent) {
 		logSystemf("awslogs publishBatch putLogEvents group=%s stream=%s dim#group=%s count#CloudWatchEventsErrors=%d err=%q", l.logGroupName, l.logStreamName, l.logGroupName, len(events), err)
 		logrus.Error(err)
 	} else {
-		logSystemf("awslogs publishBatch putLogEvents group=%s stream=%s dim#group=%s count#CloudWatchEventsSuccesses=%d", l.logGroupName, l.logStreamName, l.logGroupName, len(events))
+		// logSystemf("awslogs publishBatch putLogEvents group=%s stream=%s dim#group=%s count#CloudWatchEventsSuccesses=%d", l.logGroupName, l.logStreamName, l.logGroupName, len(events))
 		l.sequenceToken = nextSequenceToken
 	}
 }

@@ -213,6 +213,9 @@ func (m *Monitor) SetUnhealthy(system string, reason error) {
 	})
 	if err != nil {
 		m.logSystemf("monitor AutoScaling.SetInstanceHealth count#AutoScalingSetInstanceHealthError=1 err=%q", err)
+	} else {
+		// log for humans
+		m.logSystemf("who=\"convox/agent\" what=\"marked instance %s unhealthy\" why=\"%s %s\"", m.instanceId, system, reason)
 	}
 
 	// Dump dmesg to convox log stream and rollbar
