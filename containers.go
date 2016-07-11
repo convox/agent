@@ -119,7 +119,7 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 		metric := "DockerEvent" + ucfirst(event.Status)
 		msg := fmt.Sprintf("container handleEvents id=%s time=%d count#%s=1", event.ID, event.Time, metric)
 
-		if env, ok := m.envs[event.ID]; ok {
+		if env, ok := m.getEnv(event.ID); ok {
 			if p := env["PROCESS"]; p != "" {
 				msg = fmt.Sprintf("container handleEvents id=%s process=%s time=%d count#%s=1", event.ID, p, event.Time, metric)
 			}
@@ -150,7 +150,7 @@ func (m *Monitor) handleCreate(id string) {
 		}
 	}
 
-	m.envs[id] = env
+	m.setEnv(id, env)
 
 	// create a an awslogger and associated CloudWatch Logs LogGroup
 	if env["LOG_GROUP"] != "" {
@@ -159,7 +159,7 @@ func (m *Monitor) handleCreate(id string) {
 			m.logSystemf("container handleCreate StartAWSLogger logGroup=%s process=%s err=%q", env["LOG_GROUP"], env["PROCESS"], err)
 		} else {
 			m.logSystemf("container handleCreate StartAWSLogger logGroup=%s process=%s", env["LOG_GROUP"], env["PROCESS"])
-			m.loggers[id] = awslogger
+			m.setLogger(id, awslogger)
 		}
 	}
 
@@ -180,8 +180,10 @@ func (m *Monitor) handleDie(id string) {
 
 	msg := fmt.Sprintf("Dead process %s", id[0:12])
 
-	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Dead %s process %s", p, id[0:12])
+	if env, ok := m.getEnv(id); ok {
+		if p := env["PROCESS"]; p != "" {
+			msg = fmt.Sprintf("Dead %s process %s", p, id[0:12])
+		}
 	}
 
 	m.logAppEvent(id, msg)
@@ -192,8 +194,10 @@ func (m *Monitor) handleKill(id string) {
 
 	msg := fmt.Sprintf("Stopped process %s via SIGKILL", id[0:12])
 
-	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s via SIGKILL", p, id[0:12])
+	if env, ok := m.getEnv(id); ok {
+		if p := env["PROCESS"]; p != "" {
+			msg = fmt.Sprintf("Stopped %s process %s via SIGKILL", p, id[0:12])
+		}
 	}
 
 	m.logAppEvent(id, msg)
@@ -204,8 +208,10 @@ func (m *Monitor) handleOom(id string) {
 
 	msg := fmt.Sprintf("Stopped process %s due to OOM", id[0:12])
 
-	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s due to OOM", p, id[0:12])
+	if env, ok := m.getEnv(id); ok {
+		if p := env["PROCESS"]; p != "" {
+			msg = fmt.Sprintf("Stopped %s process %s due to OOM", p, id[0:12])
+		}
 	}
 
 	m.logAppEvent(id, msg)
@@ -228,8 +234,10 @@ func (m *Monitor) handleStop(id string) {
 
 	msg := fmt.Sprintf("Stopped process %s via SIGTERM", id[0:12])
 
-	if p := m.envs[id]["PROCESS"]; p != "" {
-		msg = fmt.Sprintf("Stopped %s process %s via SIGTERM", p, id[0:12])
+	if env, ok := m.getEnv(id); ok {
+		if p := env["PROCESS"]; p != "" {
+			msg = fmt.Sprintf("Stopped %s process %s via SIGTERM", p, id[0:12])
+		}
 	}
 
 	m.logAppEvent(id, msg)
@@ -237,33 +245,33 @@ func (m *Monitor) handleStop(id string) {
 
 // Modify the container cgroup to enable swap if SWAP=1 is set
 func (m *Monitor) updateCgroups(id string) {
-	env := m.envs[id]
+	if env, ok := m.getEnv(id); ok {
+		if env["SWAP"] == "1" {
+			m.logSystemf("container updateCgroups at=start id=%s", id)
 
-	if env["SWAP"] == "1" {
-		m.logSystemf("container updateCgroups at=start id=%s", id)
+			// sleep to address observed race for cgroups setup
+			// error: open /cgroup/memory/docker/6a3ea224a5e26657207f6c3d3efad072e3a5b02ec3e80a5a064909d9f882e402/memory.memsw.limit_in_bytes: no such file or directory
+			time.Sleep(1 * time.Second)
 
-		// sleep to address observed race for cgroups setup
-		// error: open /cgroup/memory/docker/6a3ea224a5e26657207f6c3d3efad072e3a5b02ec3e80a5a064909d9f882e402/memory.memsw.limit_in_bytes: no such file or directory
-		time.Sleep(1 * time.Second)
+			bytes := "18446744073709551615"
 
-		bytes := "18446744073709551615"
+			err := ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.memsw.limit_in_bytes", id), []byte(bytes), 0644)
+			if err != nil {
+				m.logSystemf("container updateCgroups id=%s cgroup=memory.memsw.limit_in_bytes value=%s err=%q", id, bytes, err)
+				m.ReportError(err)
+			}
 
-		err := ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.memsw.limit_in_bytes", id), []byte(bytes), 0644)
-		if err != nil {
-			m.logSystemf("container updateCgroups id=%s cgroup=memory.memsw.limit_in_bytes value=%s err=%q", id, bytes, err)
-			m.ReportError(err)
-		}
+			err = ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.soft_limit_in_bytes", id), []byte(bytes), 0644)
+			if err != nil {
+				m.logSystemf("container updateCgroups id=%s cgroup=memory.soft_limit_in_bytes value=%s err=%q", id, bytes, err)
+				m.ReportError(err)
+			}
 
-		err = ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.soft_limit_in_bytes", id), []byte(bytes), 0644)
-		if err != nil {
-			m.logSystemf("container updateCgroups id=%s cgroup=memory.soft_limit_in_bytes value=%s err=%q", id, bytes, err)
-			m.ReportError(err)
-		}
-
-		err = ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.limit_in_bytes", id), []byte(bytes), 0644)
-		if err != nil {
-			m.logSystemf("container updateCgroups id=%s cgroup=memory.limit_in_bytes value=%s err=%q", id, bytes, err)
-			m.ReportError(err)
+			err = ioutil.WriteFile(fmt.Sprintf("/cgroup/memory/docker/%s/memory.limit_in_bytes", id), []byte(bytes), 0644)
+			if err != nil {
+				m.logSystemf("container updateCgroups id=%s cgroup=memory.limit_in_bytes value=%s err=%q", id, bytes, err)
+				m.ReportError(err)
+			}
 		}
 	}
 }
@@ -312,7 +320,7 @@ retry:
 		}
 	}
 
-	if awslogger, ok := m.loggers[id]; ok {
+	if awslogger, ok := m.getLogger(id); ok {
 		err := awslogger.Close()
 		if err != nil {
 			m.logSystemf("container subscribeLogs id=%s awslogger.Close err=%q", id, err)
@@ -397,7 +405,7 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 		}
 	}
 
-	env := m.envs[id]
+	env, _ := m.getEnv(id)
 
 	app := env["APP"]
 	kinesis := env["KINESIS"]
@@ -428,7 +436,7 @@ func (m *Monitor) parseAndForwardLine(id, line string) {
 	// web:RXZMCQEPDKO/1d11a78279e0 Hello from Docker.
 	l := fmt.Sprintf("%s:%s/%s %s", process, release, id[0:12], line)
 
-	if awslogger, ok := m.loggers[id]; ok {
+	if awslogger, ok := m.getLogger(id); ok {
 		err := awslogger.Log(&logger.Message{
 			ContainerID: id,
 			Line:        []byte(l),
@@ -467,7 +475,7 @@ func (m *Monitor) StartAWSLogger(container *docker.Container, logGroup string) (
 		return logger, err
 	}
 
-	m.loggers[container.ID] = logger
+	m.setLogger(container.ID, logger)
 
 	return logger, nil
 }
@@ -515,6 +523,36 @@ func (m *Monitor) streamLogs() {
 			}
 		}
 	}
+}
+
+func (m *Monitor) getEnv(id string) (map[string]string, bool) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	env, ok := m.envs[id]
+	return env, ok
+}
+
+func (m *Monitor) setEnv(id string, env map[string]string) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.envs[id] = env
+}
+
+func (m *Monitor) getLogger(id string) (logger.Logger, bool) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	l, ok := m.loggers[id]
+	return l, ok
+}
+
+func (m *Monitor) setLogger(id string, l logger.Logger) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.loggers[id] = l
 }
 
 func (m *Monitor) addLine(stream string, data []byte) {
