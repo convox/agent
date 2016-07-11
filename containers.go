@@ -59,12 +59,15 @@ func (m *Monitor) handleRunning() {
 			if len(parts) == 2 {
 				m.agentVersion = parts[1]
 			}
+
+			continue
 		}
 
 		m.logSystemf("container handleRunning id=%s", container.ID)
 
+		// block to get container env then re-subscribe to logs in a goroutine
 		m.handleCreate(container.ID)
-		m.handleStart(container.ID)
+		go m.handleStart(container.ID)
 	}
 
 	m.logSystemf("container handleRunning at=end")
@@ -103,7 +106,8 @@ func (m *Monitor) handleEvents(ch chan *docker.APIEvents) {
 
 		switch event.Status {
 		case "create":
-			go m.handleCreate(event.ID)
+			// block to get container env before start event subscribes to logs in a goroutine
+			m.handleCreate(event.ID)
 		case "die":
 			go m.handleDie(event.ID)
 		case "kill":
