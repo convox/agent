@@ -43,7 +43,6 @@ func (m *Monitor) handleRunning() {
 	m.logSystemf("container handleRunning at=start")
 
 	containers, err := m.client.ListContainers(docker.ListContainersOptions{})
-
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,7 +62,9 @@ func (m *Monitor) handleRunning() {
 		}
 
 		m.logSystemf("container handleRunning id=%s", container.ID)
+
 		m.handleCreate(container.ID)
+		m.handleStart(container.ID)
 	}
 
 	m.logSystemf("container handleRunning at=end")
