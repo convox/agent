@@ -11,6 +11,7 @@ func main() {
 	go monitor.Disk()
 	go monitor.Docker()
 	go monitor.Dmesg()
+	go monitor.Spot()
 
 	for {
 		time.Sleep(60 * time.Second)
