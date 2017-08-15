@@ -227,7 +227,11 @@ func (m *Monitor) handleStart(id string) {
 	m.updateCgroups(id)
 
 	if id != m.agentId {
-		m.subscribeLogs(id)
+		if env, ok := m.getEnv(id); ok {
+			if env["LOG_GROUP"] != "" {
+				m.subscribeLogs(id)
+			}
+		}
 	}
 
 	m.logSystemf("container handleStart at=end id=%s", id)
